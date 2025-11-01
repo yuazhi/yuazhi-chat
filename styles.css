@@ -14,6 +14,9 @@
     --sidebar-width: 260px;
     --theme-color: #f5aca7;
     --theme-color-dark: #e89994;
+    --hover-color: rgba(255, 255, 255, 0.1); /* 添加悬停背景色 */
+    --skeleton-start: #f0f0f0;
+    --skeleton-end: #e0e0e0;
 }
 
 /* ÃƒÂ¦Ã‚Â·Ã‚Â»ÃƒÂ¥Ã…Â Ã‚Â ÃƒÂ¤Ã‚ÂºÃ‚Â®ÃƒÂ¨Ã¢â‚¬Â°Ã‚Â²ÃƒÂ¤Ã‚Â¸Ã‚Â»ÃƒÂ©Ã‚Â¢Ã‹Å"ÃƒÂ¥Ã‚ÂÃ‹Å"ÃƒÂ©Ã¢â‚¬Â¡Ã‚Â */
@@ -23,6 +26,7 @@
     --text-color: #343541;
     --border-color: #e5e5e5;
     --input-bg: #f7f7f8;
+    --hover-color: rgba(0, 0, 0, 0.05); /* 亮色主题的悬停背景色 */
 }
 
 * {
@@ -364,6 +368,15 @@ textarea:focus {
     margin: 0;
     margin-top: -2px;
 }
+
+/* 使用媒体查询实现不同设备的样式 */
+@media (max-width: 768px) {
+    .send-button {
+        min-width: 50px; /* 电脑端给定的最小宽度 */
+        width: 50px;   /* 手机端的宽度 */
+    }
+}
+
 
 .send-button:hover {
     background-color: var(--theme-color-dark);
@@ -848,11 +861,10 @@ pre {
 
  .input-container {
        position: fixed;
-       padding: 12px 20px;
-       padding-bottom: max(32px, env(safe-area-inset-bottom, 32px));
-       min-height: 69px;
-       margin-bottom: 0;
-       background-color: var(--primary-color);
+       padding: 12px 20px; /* ÃƒÂ¤Ã‚Â¸Ã…Â½ÃƒÂ¦Ã‚Â¡Ã…â€™ÃƒÂ©Ã‚ÂÃ‚Â¢ÃƒÂ§Ã‚Â«Ã‚Â¯ÃƒÂ¤Ã‚Â¿Ã‚ÂÃƒÂ¦Ã…â€™Ã‚ÂÃƒÂ¤Ã‚Â¸Ã¢â€šÂ¬ÃƒÂ¨Ã¢â‚¬Â¡Ã‚Â´ */
+       padding-bottom: env(safe-area-inset-bottom, 32px);
+       min-height: 60px;
+       margin-bottom: 16px;
    }
     textarea {
        height: 50px;
@@ -997,7 +1009,7 @@ button:disabled {
 
 :root[data-theme="light"] .user-message {
     background-color: var(--theme-color);
-    color: #343541;
+    color: white !important; /* 强制使用白色文字 */
 }
 
 /* ÃƒÂ¤Ã‚Â¿Ã‚Â®ÃƒÂ¦Ã¢â‚¬ÂÃ‚Â¹ÃƒÂ¤Ã‚Â¾Ã‚Â§ÃƒÂ¨Ã‚Â¾Ã‚Â¹ÃƒÂ¦Ã‚Â Ã‚ÂÃƒÂ¦Ã¢â‚¬â€œÃ¢â‚¬Â¡ÃƒÂ¥Ã‚Â­Ã¢â‚¬â€ÃƒÂ©Ã‚Â¢Ã…â€œÃƒÂ¨Ã¢â‚¬Â°Ã‚Â²ÃƒÂ©Ã¢â‚¬Â¦Ã‚Â */
@@ -1256,7 +1268,7 @@ button:disabled {
     }
 
     .message p:last-child {
-        margin-bottom: 0;  /* ÃƒÂ¦Ã…â€œÃ¢â€šÂ¬ÃƒÂ¥Ã‚ÂÃ…Â½ÃƒÂ¤Ã‚Â¸Ã¢â€šÂ¬ÃƒÂ¤Ã‚Â¸Ã‚ÂªÃƒÂ¦Ã‚Â®Ã¯Â¿Â½Ã¯Â¿Â½ÃƒÂ¨Ã‚ÂÃ‚Â½ÃƒÂ¤Ã‚Â¸Ã‚ÂÃƒÂ©Ã…â€œÃ¢â€šÂ¬ÃƒÂ¨Ã‚Â¦Ã‚ÂÃƒÂ¥Ã‚ÂºÃ¢â‚¬Â¢ÃƒÂ©Ã†â€™Ã‚Â¨ÃƒÂ©Ã¢â‚¬â€Ã‚Â´ÃƒÂ¨Ã‚Â·Ã‚Â */
+        margin-bottom: 0;  /* ÃƒÂ¦Ã…â€œÃ¢â€šÂ¬ÃƒÂ¥Ã‚ÂÃ…Â½ÃƒÂ¤Ã‚Â¸Ã¢â€šÂ¬ÃƒÂ¤Ã‚Â¸Ã‚ÂªÃƒÂ¦Ã‚Â®Ã‚ÂµÃƒÂ¨Ã‚ÂÃ‚Â½ÃƒÂ¤Ã‚Â¸Ã‚ÂÃƒÂ©Ã…â€œÃ¢â€šÂ¬ÃƒÂ¨Ã‚Â¦Ã‚ÂÃƒÂ¥Ã‚ÂºÃ¢â‚¬Â¢ÃƒÂ©Ã†â€™Ã‚Â¨ÃƒÂ©Ã¢â‚¬â€Ã‚Â´ÃƒÂ¨Ã‚Â·Ã‚Â */
     }
 
     /* ÃƒÂ¥Ã‹â€ Ã¢â‚¬â€ÃƒÂ¨Ã‚Â¡Ã‚Â¨ÃƒÂ¦Ã‚Â Ã‚Â·ÃƒÂ¥Ã‚Â¼Ã‚Â */
@@ -1708,4 +1720,355 @@ button:disabled {
 .message h6 + hr,
 .message p + hr {
     margin-top: 1em;    /* Ã§Â»Å¸Ã¤Â¸â‚¬Ã©â€"Â´Ã¨Â·Â */
+}
+
+/* 消息操作按钮样式 */
+.message-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+    margin-left: -10px;
+    opacity: 1;
+    padding: 0 4px;
+}
+
+.action-button {
+    background: none;
+    border: none;
+    padding: 6px;
+    cursor: pointer;
+    border-radius: 4px;
+    color: var(--text-color);
+    opacity: 0.6;
+    transition: all 0.2s ease;
+    position: relative;
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.action-button:hover {
+    background-color: var(--hover-color);
+    opacity: 1;
+}
+
+/* 复制按钮状态样式 */
+.action-button.copied {
+    color: white;
+    opacity: 1;
+}
+
+
+/* 复制按钮图标切换 */
+.action-button .copy-icon,
+.action-button .check-icon {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    transition: opacity 0.2s ease;
+    width: 16px;
+    height: 16px;
+}
+
+.action-button .check-icon {
+    opacity: 0;
+}
+
+.action-button.copied .copy-icon {
+    opacity: 0;
+}
+
+.action-button.copied .check-icon {
+    opacity: 1;
+}
+
+.action-button svg {
+    width: 16px;
+    height: 16px;
+    display: block;
+}
+
+/* 确保消息容器使用相对定位，这样操作按钮可以正确定位 */
+.message {
+    position: relative;
+}
+
+.skeleton-image {
+    width: 300px;
+    height: 300px;
+    background: linear-gradient(90deg, var(--skeleton-start) 25%, var(--skeleton-end) 37%, var(--skeleton-start) 63%);
+    background-size: 400% 100%;
+    animation: skeleton-loading 1.4s ease infinite;
+    border-radius: 8px;
+    margin: 10px auto;
+    display: block;
+}
+
+@keyframes skeleton-loading {
+    0% {
+        background-position: 100% 50%;
+    }
+    100% {
+        background-position: 0 50%;
+    }
+}
+
+.image-loading {
+    display: flex;
+    width: 100%;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding: 0 20px;
+    box-sizing: border-box;
+}
+
+.generated-image {
+    width: 300px;
+    height: 300px;
+    object-fit: contain;
+    border-radius: 8px;
+    margin: 10px auto;
+    display: block;
+}
+
+/* 移动端适配 */
+@media (max-width: 768px) {
+    .message {
+        max-width: 90%;
+        padding: 0.75rem 1rem;
+        margin-bottom: 1rem;
+        width: auto;
+        box-sizing: border-box;
+    }
+    
+    .image-loading {
+        width: 100%;
+        padding: 0 10px;
+        margin: 0 auto;
+        box-sizing: border-box;
+    }
+    
+    .skeleton-image {
+        width: 100%;
+        max-width: 250px;
+        height: 250px;
+        margin: 10px auto;
+        display: block;
+    }
+    
+    .generated-image {
+        width: 100%;
+        max-width: 250px;
+        height: 250px;
+        margin: 10px auto;
+        display: block;
+    }
+    
+    /* 确保图片容器在消息气泡内正确显示 */
+    .assistant-message .image-loading {
+        width: 100%;
+        max-width: 100%;
+        padding: 0;
+        box-sizing: border-box;
+    }
+    
+    /* 确保骨架屏在消息气泡内完整显示 */
+    .assistant-message .skeleton-image {
+        width: 100%;
+        max-width: 250px;
+        height: 250px;
+        margin: 10px auto;
+        display: block;
+    }
+}
+
+/* DeepSeek思考过程样式 */
+.thinking-summary {
+    margin-bottom: 15px;
+    border-radius: 8px;
+    background-color: rgba(0, 0, 0, 0.02);
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    overflow: hidden;
+    width: 100%;
+}
+
+.thinking-header {
+    padding: 12px 15px;
+    font-size: 15px;
+    font-weight: 500;
+    color: #333;
+    background-color: rgba(0, 0, 0, 0.03);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    transition: background-color 0.2s;
+}
+
+.thinking-header:hover {
+    background-color: rgba(0, 0, 0, 0.05);
+}
+
+.thinking-header.expanded {
+    border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.thinking-header.expanded .thinking-arrow {
+    transform: rotate(180deg);
+}
+
+.thinking-icon {
+    margin-right: 8px;
+    color: #666;
+}
+
+.thinking-arrow {
+    margin-left: auto;
+    transition: transform 0.2s;
+}
+
+.thinking-content {
+    padding: 15px;
+    color: #666;
+    font-size: 14px;
+    line-height: 1.6;
+    white-space: normal;
+    max-height: 500px;
+    overflow-y: auto;
+    background-color: rgba(0, 0, 0, 0.01);
+}
+
+.thinking-content p {
+    margin: 0 0 10px 0;
+    text-indent: 0;
+    line-height: 1.6;
+}
+
+.thinking-content p:last-child {
+    margin-bottom: 0;
+}
+
+.thinking-content ul,
+.thinking-content ol {
+    margin: 0 0 10px 0;
+    padding-left: 20px;
+}
+
+.thinking-content ul li,
+.thinking-content ol li {
+    margin-bottom: 5px;
+}
+
+.thinking-content pre {
+    background-color: rgba(0, 0, 0, 0.05);
+    padding: 10px;
+    border-radius: 4px;
+    margin: 10px 0;
+    overflow-x: auto;
+    white-space: pre-wrap;
+}
+
+.thinking-content code {
+    background-color: rgba(0, 0, 0, 0.05);
+    padding: 2px 4px;
+    border-radius: 3px;
+    font-family: monospace;
+}
+
+/* 处理逗号和句号后的空格 */
+.thinking-content {
+    word-break: break-word;
+    word-wrap: break-word;
+}
+
+/* 暗色模式下的思考内容样式 */
+[data-theme='dark'] .thinking-summary {
+    background-color: rgba(255, 255, 255, 0.03);
+    border-color: rgba(255, 255, 255, 0.1);
+}
+
+[data-theme='dark'] .thinking-header {
+    color: #e0e0e0;
+    background-color: rgba(255, 255, 255, 0.02);
+}
+
+[data-theme='dark'] .thinking-header:hover {
+    background-color: rgba(255, 255, 255, 0.04);
+}
+
+[data-theme='dark'] .thinking-content {
+    color: #aaa;
+    background-color: rgba(255, 255, 255, 0.01);
+}
+
+[data-theme='dark'] .thinking-content pre {
+    background-color: rgba(0, 0, 0, 0.3);
+}
+
+[data-theme='dark'] .thinking-content code {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+.thinking-content h1,
+.thinking-content h2,
+.thinking-content h3,
+.thinking-content h4,
+.thinking-content h5,
+.thinking-content h6 {
+    margin: 15px 0 10px 0;
+    line-height: 1.4;
+    font-weight: 600;
+    color: #444;
+}
+
+.thinking-content h1:first-child,
+.thinking-content h2:first-child,
+.thinking-content h3:first-child,
+.thinking-content h4:first-child,
+.thinking-content h5:first-child,
+.thinking-content h6:first-child {
+    margin-top: 0;
+}
+
+.thinking-content h1 {
+    font-size: 1.5em;
+}
+
+.thinking-content h2 {
+    font-size: 1.3em;
+}
+
+.thinking-content h3 {
+    font-size: 1.2em;
+}
+
+.thinking-content h4,
+.thinking-content h5,
+.thinking-content h6 {
+    font-size: 1.1em;
+}
+
+[data-theme='dark'] .thinking-content h1,
+[data-theme='dark'] .thinking-content h2,
+[data-theme='dark'] .thinking-content h3,
+[data-theme='dark'] .thinking-content h4,
+[data-theme='dark'] .thinking-content h5,
+[data-theme='dark'] .thinking-content h6 {
+    color: #e0e0e0;
+}
+
+[data-theme='dark'] .thinking-content a {
+    color: #7eb6ff;
+}
+
+.thinking-content a {
+    color: #1a73e8;
+    text-decoration: none;
+}
+
+.thinking-content a:hover {
+    text-decoration: underline;
 }

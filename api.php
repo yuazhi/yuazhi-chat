@@ -10,6 +10,19 @@ ini_set('session.cookie_lifetime', 86400);
 ini_set('session.gc_maxlifetime', 86400);
 session_set_cookie_params(86400);
 
+// 设置响应头
+header('Content-Type: text/event-stream');
+header('Cache-Control: no-cache');
+header('Connection: keep-alive');
+header('X-Accel-Buffering: no'); // 禁用 Nginx 缓冲
+
+// 禁用 PHP 输出缓冲
+if (ob_get_level()) ob_end_clean();
+@ini_set('output_buffering', 0);
+@ini_set('implicit_flush', 1);
+for ($i = 0; $i < ob_get_level(); $i++) { ob_end_flush(); }
+ob_implicit_flush(1);
+
 // 确保在输出任何内容之前设置header
 header('Content-Type: application/json');
 session_start();
@@ -41,6 +54,13 @@ ini_set('display_errors', 0);
 set_error_handler(function($errno, $errstr, $errfile, $errline) {
     throw new ErrorException($errstr, $errno, 0, $errfile, $errline);
 });
+
+// API配置
+define('API_KEY', 'sk-ttncbnpnvrqxmhiugxxucrlzrkhhpivxmdsrlrwbnmrtxwvg');
+define('API_URL', 'https://api.siliconflow.cn/v1/chat/completions');
+define('API_MODEL', 'ft:LoRA/Qwen/Qwen2.5-72B-Instruct:pjyxv5c8kg:yuazhifurry:nhjvzakgoawnhamepaqv-ckpt_step_32');
+define('MAX_TOKENS', 2000);
+define('TEMPERATURE', 0.9);
 
 try {
     // 数据库连接配置
@@ -77,7 +97,14 @@ try {
     }
 
     // 路由处理
-    $action = $_POST['action'] ?? '';
+    $contentType = isset($_SERVER["CONTENT_TYPE"]) ? trim($_SERVER["CONTENT_TYPE"]) : '';
+    
+    if (stripos($contentType, 'application/json') !== false) {
+        $input = json_decode(file_get_contents('php://input'), true);
+        $action = $input['action'] ?? '';
+    } else {
+        $action = $_POST['action'] ?? '';
+    }
 
     switch ($action) {
         case 'checkLogin':
@@ -237,13 +264,13 @@ try {
                     $mail->Port = 465;
                     $mail->CharSet = 'UTF-8';
                     
-                    $mail->setFrom('2210459573@qq.com', 'AI Chat');
+                    $mail->setFrom('2210459573@qq.com', '与yuazhi chat！');
                     $mail->addAddress($email);
                     
                     $resetLink = "https://" . $_SERVER['HTTP_HOST'] . "/reset-password.php?token=" . $token;
                     
                     $mail->isHTML(true);
-                    $mail->Subject = "重置密码 - AI Chat";
+                    $mail->Subject = "重置密码 - 与yuazhi chat！";
                     $mail->Body = "
                         <div style='max-width: 600px; margin: 0 auto; padding: 20px;'>
                             <h2 style='color: #333; margin-bottom: 20px;'>重置密码</h2>
@@ -327,14 +354,7 @@ try {
             }
             break;
         case 'chat':
-            $messages = json_decode($_POST['messages'], true);
-            $model = $_POST['model'] ?? 'yuanzhi'; // 获取模型参数
-            
-            // 这里可以根据不同的模型使用不同的API端点或参数
-            // 如果使用同一个API，只是角色设定不同，那么这里不需要做特殊处理
-            
-            // 处理消息并返回响应
-            // ...
+            handleChat();
             break;
         default:
             echo json_encode(['success' => false, 'error' => '未知操作']);
@@ -534,6 +554,250 @@ function handleDeleteChatHistory($mysqli) {
         $mysqli->rollback();
         echo json_encode(['success' => false, 'error' => '删除失败: ' . $e->getMessage()]);
     }
+}
+
+// 添加处理聊天的函数
+function handleChat() {
+    try {
+        $input = json_decode(file_get_contents('php://input'), true);
+        
+        if (!isset($input['messages']) || !is_array($input['messages'])) {
+            throw new Exception('无效的消息格式');
+        }
+
+        // 根据不同的模型选择对应的模型ID
+        switch ($input['model']) {
+            case 'yuanzhi':
+                $model = API_MODEL; // 使用原有的鸢栀模型
+                break;
+            case 'deepseek':
+                $model = 'Pro/deepseek-ai/DeepSeek-R1';
+                break;
+            default:
+                $model = 'Qwen/Qwen2.5-7B-Instruct';
+        }
+        
+        // 检查是否请求流式响应
+        if (isset($input['stream']) && $input['stream']) {
+            // 流式响应
+            header('Content-Type: text/event-stream');
+            header('Cache-Control: no-cache');
+            header('Connection: keep-alive');
+            header('X-Accel-Buffering: no');
+            
+            // 禁用输出缓冲
+            if (ob_get_level()) ob_end_clean();
+            @ini_set('output_buffering', 0);
+            @ini_set('implicit_flush', 1);
+            for ($i = 0; $i < ob_get_level(); $i++) { ob_end_flush(); }
+            ob_implicit_flush(1);
+            
+            // 流式发送到AI API
+            sendToChatAPIStream($input['messages'], $model);
+        } else {
+            // 非流式响应
+            $response = sendToChatAPI($input['messages'], $model);
+            echo json_encode([
+                'success' => true,
+                'content' => $response['choices'][0]['message']['content']
+            ]);
+        }
+    } catch (Exception $e) {
+        http_response_code(500);
+        echo json_encode([
+            'success' => false,
+            'error' => $e->getMessage()
+        ]);
+    }
+}
+
+function sendToChatAPI($messages, $model) {
+    $ch = curl_init(API_URL);
+    
+    $data = [
+        'model' => $model,
+        'messages' => $messages,
+        'stream' => false,
+        'max_tokens' => MAX_TOKENS,
+        'temperature' => TEMPERATURE
+    ];
+    
+    $headers = [
+        'Authorization: Bearer ' . API_KEY,
+        'Content-Type: application/json'
+    ];
+    
+    curl_setopt_array($ch, [
+        CURLOPT_POST => true,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HTTPHEADER => $headers,
+        CURLOPT_POSTFIELDS => json_encode($data)
+    ]);
+    
+    $response = curl_exec($ch);
+    
+    if (curl_errno($ch)) {
+        throw new Exception('API请求失败: ' . curl_error($ch));
+    }
+    
+    curl_close($ch);
+    
+    $result = json_decode($response, true);
+    
+    if (!$result || isset($result['error'])) {
+        throw new Exception('API响应错误: ' . ($result['error']['message'] ?? '未知错误'));
+    }
+    
+    return $result;
+}
+
+// 添加流式API调用函数
+function sendToChatAPIStream($messages, $model) {
+    $ch = curl_init(API_URL);
+    
+    $data = [
+        'model' => $model,
+        'messages' => $messages,
+        'stream' => true,
+        'max_tokens' => MAX_TOKENS,
+        'temperature' => TEMPERATURE
+    ];
+    
+    // DeepSeek-R1模型的特殊处理
+    if (strpos($model, 'deepseek') !== false) {
+        $data['stream_format'] = 'text'; // 确保使用文本流格式
+        // 通过前置指令让模型使用思考过程
+        $data['messages'] = array_map(function($msg) {
+            if ($msg['role'] === 'system') {
+                // 在系统指令中添加使用<think>标签的指示
+                $msg['content'] .= "\n\n在回答复杂问题时，请先用<think>标签记录你的思考过程，然后给出最终答案。例如：<think>这是我的分析过程...</think>这是我的最终回答。";
+            }
+            return $msg;
+        }, $data['messages']);
+    }
+    
+    $headers = [
+        'Authorization: Bearer ' . API_KEY,
+        'Content-Type: application/json'
+    ];
+    
+    curl_setopt_array($ch, [
+        CURLOPT_POST => true,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HTTPHEADER => $headers,
+        CURLOPT_POSTFIELDS => json_encode($data),
+        CURLOPT_WRITEFUNCTION => function($ch, $data) use ($model) {
+            // 针对DeepSeek模型进行特殊处理
+            if (strpos($model, 'deepseek') !== false) {
+                // 检查数据中是否包含<think>标签
+                $hasThinkTag = strpos($data, '<think>') !== false || strpos($data, '</think>') !== false;
+                
+                // 如果包含思考标签，进行特殊处理
+                if ($hasThinkTag) {
+                    // 替换为自定义前端可识别的格式
+                    $data = str_replace('<think>', '<sy_think>', $data);
+                    $data = str_replace('</think>', '</sy_think>', $data);
+                    
+                    // 转换为SSE格式
+                    if (strpos($data, 'data:') === false) {
+                        $chunks = explode("\n", $data);
+                        $output = '';
+                        foreach ($chunks as $chunk) {
+                            if (trim($chunk) !== '') {
+                                $output .= "data: " . json_encode([
+                                    'choices' => [
+                                        [
+                                            'delta' => [
+                                                'content' => $chunk
+                                            ]
+                                        ]
+                                    ]
+                                ]) . "\n\n";
+                            }
+                        }
+                        echo $output;
+                        flush();
+                        return strlen($data);
+                    }
+                }
+
+                // 检查是否有reasoning_content格式的返回数据
+                if (strpos($data, 'reasoning_content') !== false) {
+                    // 保持原始格式，让前端处理
+                    echo $data;
+                    flush();
+                    return strlen($data);
+                }
+                
+                // 尝试解析数据
+                $lines = explode("\n", $data);
+                foreach ($lines as $line) {
+                    if (strpos($line, 'data:') === 0) {
+                        // 已经是SSE格式
+                        echo $line . "\n";
+                    } else if (trim($line) !== '') {
+                        // 非SSE格式，转换为SSE格式
+                        try {
+                            // 尝试解析为JSON
+                            $jsonData = json_decode($line, true);
+                            if ($jsonData) {
+                                $content = '';
+                                // 从不同可能的位置提取内容
+                                if (isset($jsonData['choices'][0]['text'])) {
+                                    $content = $jsonData['choices'][0]['text'];
+                                } else if (isset($jsonData['choices'][0]['content'])) {
+                                    $content = $jsonData['choices'][0]['content'];
+                                } else if (isset($jsonData['text'])) {
+                                    $content = $jsonData['text'];
+                                }
+                                
+                                if ($content) {
+                                    // 创建符合OpenAI流式格式的输出
+                                    $output = [
+                                        'choices' => [
+                                            [
+                                                'delta' => [
+                                                    'content' => $content
+                                                ]
+                                            ]
+                                        ]
+                                    ];
+                                    echo "data: " . json_encode($output) . "\n\n";
+                                }
+                            } else {
+                                // 纯文本内容
+                                echo "data: " . json_encode([
+                                    'choices' => [
+                                        [
+                                            'delta' => [
+                                                'content' => $line
+                                            ]
+                                        ]
+                                    ]
+                                ]) . "\n\n";
+                            }
+                        } catch (Exception $e) {
+                            // 如果解析失败，直接返回原始数据
+                            echo "data: " . $line . "\n\n";
+                        }
+                    }
+                }
+            } else {
+                // 其他模型直接传递数据
+                echo $data;
+            }
+            flush();
+            return strlen($data);
+        }
+    ]);
+    
+    $response = curl_exec($ch);
+    
+    if (curl_errno($ch)) {
+        throw new Exception('API请求失败: ' . curl_error($ch));
+    }
+    
+    curl_close($ch);
 }
 
 if (isset($mysqli)) {

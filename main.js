@@ -4,6 +4,8 @@ const messageHistory = []; // 移到文件顶部
 const chatHistoryList = [];
 let sidebarOverlay;
 let currentChatId = null; // 添加当前聊天ID的跟踪
+const TAVILY_API_KEY = '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';
+let isSearchMode = false;
 
 // 检测浏览器类型
 function getBrowserType() {
@@ -62,6 +64,36 @@ function initEventListeners() {
                 if (sidebarOverlay) {
                     sidebarOverlay.classList.add('active');
                 }
+            }
+        });
+    }
+
+    // 添加搜索按钮事件监听
+    const searchButton = document.getElementById('search-button');
+    if (searchButton) {
+        searchButton.addEventListener('click', function() {
+            this.classList.toggle('active');
+            isSearchMode = this.classList.contains('active');
+            
+            // 更新按钮文本
+            if (isSearchMode) {
+                this.innerHTML = `
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"/>
+                        <path d="M2 12h20"/>
+                        <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+                    </svg>
+                    
+                `;
+            } else {
+                this.innerHTML = `
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"/>
+                        <path d="M2 12h20"/>
+                        <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+                    </svg>
+                    
+                `;
             }
         });
     }
@@ -190,6 +222,8 @@ function addMessage(message, sender, containerId, useTypingEffect = true) {
             .replace(/'/g, '&#039;')
             .replace(/\n/g, '<br>');
         messageDiv.innerHTML = escapedMessage;
+        // 只在用户发送消息时滚动到底部
+        chatMessages.scrollTop = chatMessages.scrollHeight;
     } else {
         // 检查是否是图片消息
         if (message.startsWith('Generated image: ')) {
@@ -448,7 +482,8 @@ function addTypingIndicator() {
     typingDiv.innerHTML = '<span></span><span></span><span></span>';
     typingDiv.id = 'typing-indicator';
     chatMessages.appendChild(typingDiv);
-    chatMessages.scrollTop = chatMessages.scrollHeight;
+    // 移除自动滚动
+    // chatMessages.scrollTop = chatMessages.scrollHeight;
 }
 
 function removeTypingIndicator() {
@@ -608,19 +643,24 @@ function updateChatHistoryUI() {
 
             currentChatId = chat.id;
             const chatMessages = document.getElementById('main-chat-messages');
-            chatMessages.innerHTML = '';
-            messageHistory.length = 0;
+            chatMessages.innerHTML = ''; // 清空聊天区域
+            messageHistory.length = 0;  // 清空消息历史
 
             // 确保消息按时间戳排序后再加载
             const sortedMessages = chat.messages.sort((a, b) => {
-                return (b.timestamp || 0) - (a.timestamp || 0);
+                return a.order - b.order; // 使用order而不是timestamp来排序
             });
+
+            // 清除所有现有的消息
+            const existingMessages = chatMessages.querySelectorAll('.message');
+            existingMessages.forEach(msg => msg.remove());
 
             sortedMessages.forEach(msg => {
                 messageHistory.push({
                     role: msg.role,
                     content: msg.content,
-                    timestamp: msg.timestamp || Date.now() // 确保有时间戳
+                    timestamp: msg.timestamp || Date.now(), // 确保有时间戳
+                    order: msg.order // 保持消息顺序
                 });
                 
                 if (msg.role === 'assistant') {
@@ -637,11 +677,43 @@ function updateChatHistoryUI() {
                                 <img src="${imageUrl}" alt="AI Generated Image" class="generated-image" />
                             </div>
                         `;
+                        return;
+                    }
+                    
+                    // 检查是否包含思考内容
+                    if (msg.content.includes('<sy_think>')) {
+                        // 检查是否同时包含搜索引用
+                        if (msg.content.includes('<search_references>')) {
+                            // 使用processThinkingTags处理带思考标签和引用的内容
+                            messageDiv.innerHTML = processThinkingTags(msg.content);
+                        } else {
+                            // 使用processThinkingTags处理带思考标签的内容
+                            messageDiv.innerHTML = processThinkingTags(msg.content);
+                        }
+                        
+                        // 确保思考内容区域展开
+                        const thinkingHeaders = messageDiv.querySelectorAll('.thinking-header');
+                        const thinkingContents = messageDiv.querySelectorAll('.thinking-content');
+                        
+                        thinkingHeaders.forEach(header => {
+                            header.classList.add('expanded');
+                        });
+                        
+                        thinkingContents.forEach(content => {
+                            content.style.display = 'block';
+                        });
+                    } else if (msg.content.includes('<search_references>')) {
+                        // 处理包含搜索引用的消息
+                        processMessageWithReferences(msg.content, messageDiv);
                     } else {
-                        // 处理文本消息，包括代码块
+                        // 处理普通文本消息，包括代码块
                         messageDiv.innerHTML = marked.parse(msg.content);
-                        // 为所有代码块添加包装器和复制按钮
-                        messageDiv.querySelectorAll('pre code').forEach(codeBlock => {
+                    }
+                    
+                    // 为所有代码块添加包装器和复制按钮
+                    messageDiv.querySelectorAll('pre code').forEach(codeBlock => {
+                        // 检查代码块是否已经有包装器
+                        if (!codeBlock.parentElement.parentElement.classList.contains('code-block-wrapper')) {
                             const wrapper = document.createElement('div');
                             wrapper.className = 'code-block-wrapper';
                             
@@ -657,9 +729,10 @@ function updateChatHistoryUI() {
                             }
                             
                             const pre = codeBlock.parentElement;
-                            pre.parentElement.insertBefore(wrapper, pre);
+                            pre.parentNode.insertBefore(wrapper, pre);
                             wrapper.appendChild(pre);
                             
+                            // 添加复制按钮
                             const copyButton = document.createElement('button');
                             copyButton.className = 'copy-button';
                             copyButton.textContent = 'Copy code';
@@ -668,7 +741,613 @@ function updateChatHistoryUI() {
                             
                             // 应用代码高亮
                             hljs.highlightElement(codeBlock);
-                        });
+                        }
+                    });
+
+                    // 添加消息操作按钮
+                    // 只有非开场白消息才添加操作按钮
+                    if (msg.content !== '你好呀，有什么可以帮忙的？') {
+                        const actionButtons = document.createElement('div');
+                        actionButtons.className = 'message-actions';
+                        
+                        // 复制按钮
+                        const copyMessageButton = document.createElement('button');
+                        copyMessageButton.className = 'action-button';
+                        copyMessageButton.innerHTML = `
+                            <span class="copy-icon">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                                </svg>
+                            </span>
+                            <span class="check-icon">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="20 6 9 17 4 12"></polyline>
+                                </svg>
+                            </span>
+                        `;
+                        copyMessageButton.title = '复制回答';
+                        copyMessageButton.onclick = () => {
+                            navigator.clipboard.writeText(msg.content).then(() => {
+                                copyMessageButton.classList.add('copied');
+                                setTimeout(() => copyMessageButton.classList.remove('copied'), 2000);
+                            });
+                        };
+
+                        // 重新回答按钮
+                        const newRegenerateButton = document.createElement('button');
+                        newRegenerateButton.className = 'action-button';
+                        newRegenerateButton.innerHTML = `
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.3"/>
+                            </svg>
+                        `;
+                        newRegenerateButton.title = '重新回答';
+                        newRegenerateButton.onclick = async () => {
+                            // 移除当前回答的内容，但保留消息容器
+                            messageDiv.innerHTML = '';
+                            
+                            // 获取当前消息的order
+                            const currentMessageOrder = messageHistory.findIndex(m => 
+                                m.role === 'assistant' && 
+                                m.content === msg.content
+                            );
+
+                            // 创建一个新的消息历史，只包含当前消息之前的对话
+                            const previousMessages = messageHistory.filter((m, index) => index < currentMessageOrder);
+                            
+                            // 添加打字机动画
+                            const typingIndicator = document.createElement('div');
+                            typingIndicator.className = 'typing-indicator';
+                            typingIndicator.innerHTML = '<span></span><span></span><span></span>';
+                            messageDiv.appendChild(typingIndicator);
+
+                            try {
+                                // 使用截至当前消息之前的历史记录重新请求回答
+                                const messages = buildMessages(previousMessages);
+                                let textContainer = null;
+                                let accumulatedText = '';
+                                let currentIndex = 0;
+
+                                const regenerateResponse = await sendToAPI(messages, async (chunk) => {
+                                    // 在第一次收到响应时创建文本容器
+                                    if (currentIndex === 0) {
+                                        messageDiv.innerHTML = ''; // 清除打字机动画
+                                        textContainer = document.createElement('div');
+                                        messageDiv.appendChild(textContainer);
+                                    }
+
+                                    accumulatedText += chunk;
+                                    currentIndex += chunk.length;
+
+                                    // 处理思考过程
+                                    let processedHTML = accumulatedText;
+                                    
+                                    // 检查是否有思考标签和引用标签
+                                    if (accumulatedText.includes('<sy_think>') && accumulatedText.includes('<search_references>')) {
+                                        // 同时包含思考标签和引用标签
+                                        processedHTML = processThinkingTags(accumulatedText);
+                                        textContainer.innerHTML = processedHTML;
+                                        
+                                        // 确保思考内容区域展开
+                                        const thinkingHeaders = textContainer.querySelectorAll('.thinking-header');
+                                        const thinkingContents = textContainer.querySelectorAll('.thinking-content');
+                                        
+                                        thinkingHeaders.forEach(header => {
+                                            header.classList.add('expanded');
+                                        });
+                                        
+                                        thinkingContents.forEach(content => {
+                                            content.style.display = 'block';
+                                        });
+                                    } else if (accumulatedText.includes('<sy_think>')) {
+                                        // 只有思考标签
+                                        processedHTML = processThinkingTags(accumulatedText);
+                                        textContainer.innerHTML = processedHTML;
+                
+                                        // 确保思考内容区域展开
+                                        const thinkingHeaders = textContainer.querySelectorAll('.thinking-header');
+                                        const thinkingContents = textContainer.querySelectorAll('.thinking-content');
+                
+                                        thinkingHeaders.forEach(header => {
+                                            header.classList.add('expanded');
+                                        });
+                
+                                        thinkingContents.forEach(content => {
+                                            content.style.display = 'block';
+                                        });
+                                    } else if (accumulatedText.includes('<search_references>')) {
+                                        // 只有引用标签
+                                        processMessageWithReferences(accumulatedText, messageDiv);
+                                    } else {
+                                        // 使用 marked 解析累积的文本
+                                        textContainer.innerHTML = marked.parse(accumulatedText);
+                                    }
+                                    
+                                    // 处理代码块
+                                    textContainer.querySelectorAll('pre code').forEach(block => {
+                                        hljs.highlightElement(block);
+                                        
+                                        // 检查是否已经有包装器
+                                        const pre = block.parentElement;
+                                        if (!pre.parentElement?.classList.contains('code-block-wrapper')) {
+                                            const wrapper = document.createElement('div');
+                                            wrapper.className = 'code-block-wrapper';
+                                            
+                                            // 解析语言和文件名
+                                            const match = block.className.match(/language-([^:]+)(?::(.+))?/);
+                                            if (match) {
+                                                const language = match[1];
+                                                const filename = match[2];
+                                                wrapper.setAttribute('data-language', language);
+                                                if (filename) {
+                                                    wrapper.setAttribute('data-filename', filename);
+                                                }
+                                            }
+                                            
+                                            pre.parentNode.insertBefore(wrapper, pre);
+                                            wrapper.appendChild(pre);
+                                        }
+                                    });
+                                });
+
+                                if (regenerateResponse.success) {
+                                    // 更新历史记录中对应order的消息
+                                    messageHistory[currentMessageOrder] = {
+                                        role: "assistant",
+                                        content: regenerateResponse.content,
+                                        timestamp: Date.now(),
+                                        order: currentMessageOrder
+                                    };
+
+
+                                    // 保存到数据库
+                                    await saveChatToDatabase();
+
+                                    // 在响应完成后为所有代码块添加复制按钮
+                                    messageDiv.querySelectorAll('.code-block-wrapper').forEach(wrapper => {
+                                        if (!wrapper.querySelector('.copy-button')) {
+                                            const copyButton = document.createElement('button');
+                                            copyButton.className = 'copy-button';
+                                            copyButton.textContent = 'Copy code';
+                                            copyButton.onclick = () => copyCode(copyButton);
+                                            wrapper.appendChild(copyButton);
+                                        }
+                                    });
+
+                                    // 重新添加消息操作按钮
+                                    const newActionButtons = document.createElement('div');
+                                    newActionButtons.className = 'message-actions';
+                                    
+                                    // 复制按钮
+                                    const newCopyMessageButton = document.createElement('button');
+                                    newCopyMessageButton.className = 'action-button';
+                                    newCopyMessageButton.innerHTML = copyMessageButton.innerHTML;
+                                    newCopyMessageButton.title = '复制回答';
+                                    newCopyMessageButton.onclick = () => {
+                                        navigator.clipboard.writeText(regenerateResponse.content).then(() => {
+                                            newCopyMessageButton.classList.add('copied');
+                                            setTimeout(() => newCopyMessageButton.classList.remove('copied'), 2000);
+                                        });
+                                    };
+
+                                    // 重新添加重新回答按钮 - 使用更新后的内容进行匹配
+                                    const reRegenerateButton = document.createElement('button');
+                                    reRegenerateButton.className = 'action-button';
+                                    reRegenerateButton.innerHTML = newRegenerateButton.innerHTML;
+                                    reRegenerateButton.title = '重新回答';
+                                    // 创建一个新的onclick函数，使用更新后的内容来匹配
+                                    const updatedContent = regenerateResponse.content;
+                                    reRegenerateButton.onclick = async () => {
+                                        // 移除当前回答的内容，但保留消息容器
+                                        messageDiv.innerHTML = '';
+                                        
+                                        // 获取当前消息的order - 使用更新后的内容来匹配
+                                        const messageOrder = messageHistory.findIndex(m => 
+                                            m.role === 'assistant' && 
+                                            m.content === updatedContent
+                                        );
+                                        
+                                        // 如果找不到，尝试使用currentMessageOrder
+                                        const finalOrder = messageOrder !== -1 ? messageOrder : currentMessageOrder;
+                                        
+                                        // 创建一个新的消息历史，只包含当前消息之前的对话
+                                        const previousMessages = messageHistory.filter((m, index) => index < finalOrder);
+                                        
+                                        // 添加打字机动画
+                                        const typingIndicator = document.createElement('div');
+                                        typingIndicator.className = 'typing-indicator';
+                                        typingIndicator.innerHTML = '<span></span><span></span><span></span>';
+                                        messageDiv.appendChild(typingIndicator);
+                                        
+                                        try {
+                                            // 使用截至当前消息之前的历史记录重新请求回答
+                                            const messages = buildMessages(previousMessages);
+                                            let textContainer = null;
+                                            let accumulatedText = '';
+                                            let currentIndex = 0;
+
+                                            const newRegenerateResponse = await sendToAPI(messages, async (chunk) => {
+                                                // 在第一次收到响应时创建文本容器
+                                                if (currentIndex === 0) {
+                                                    messageDiv.innerHTML = ''; // 清除打字机动画
+                                                    textContainer = document.createElement('div');
+                                                    messageDiv.appendChild(textContainer);
+                                                }
+
+                                                accumulatedText += chunk;
+                                                currentIndex += chunk.length;
+
+                                                // 处理思考过程
+                                                let processedHTML = accumulatedText;
+                                                
+                                                // 检查是否有思考标签和引用标签
+                                                if (accumulatedText.includes('<sy_think>') && accumulatedText.includes('<search_references>')) {
+                                                    // 同时包含思考标签和引用标签
+                                                    processedHTML = processThinkingTags(accumulatedText);
+                                                    textContainer.innerHTML = processedHTML;
+                                                    
+                                                    // 确保思考内容区域展开
+                                                    const thinkingHeaders = textContainer.querySelectorAll('.thinking-header');
+                                                    const thinkingContents = textContainer.querySelectorAll('.thinking-content');
+                                                    
+                                                    thinkingHeaders.forEach(header => {
+                                                        header.classList.add('expanded');
+                                                    });
+                                                    
+                                                    thinkingContents.forEach(content => {
+                                                        content.style.display = 'block';
+                                                    });
+                                                } else if (accumulatedText.includes('<sy_think>')) {
+                                                    // 只有思考标签
+                                                    processedHTML = processThinkingTags(accumulatedText);
+                                                    textContainer.innerHTML = processedHTML;
+                                        
+                                                    // 确保思考内容区域展开
+                                                    const thinkingHeaders = textContainer.querySelectorAll('.thinking-header');
+                                                    const thinkingContents = textContainer.querySelectorAll('.thinking-content');
+                                        
+                                                    thinkingHeaders.forEach(header => {
+                                                        header.classList.add('expanded');
+                                                    });
+                                        
+                                                    thinkingContents.forEach(content => {
+                                                        content.style.display = 'block';
+                                                    });
+                                                } else if (accumulatedText.includes('<search_references>')) {
+                                                    // 只有引用标签
+                                                    processMessageWithReferences(accumulatedText, messageDiv);
+                                                } else {
+                                                    // 使用 marked 解析累积的文本
+                                                    textContainer.innerHTML = marked.parse(accumulatedText);
+                                                }
+                                                
+                                                // 处理代码块
+                                                textContainer.querySelectorAll('pre code').forEach(block => {
+                                                    hljs.highlightElement(block);
+                                                    
+                                                    // 检查是否已经有包装器
+                                                    const pre = block.parentElement;
+                                                    if (!pre.parentElement?.classList.contains('code-block-wrapper')) {
+                                                        const wrapper = document.createElement('div');
+                                                        wrapper.className = 'code-block-wrapper';
+                                                        
+                                                        // 解析语言和文件名
+                                                        const match = block.className.match(/language-([^:]+)(?::(.+))?/);
+                                                        if (match) {
+                                                            const language = match[1];
+                                                            const filename = match[2];
+                                                            wrapper.setAttribute('data-language', language);
+                                                            if (filename) {
+                                                                wrapper.setAttribute('data-filename', filename);
+                                                            }
+                                                        }
+                                                        
+                                                        pre.parentNode.insertBefore(wrapper, pre);
+                                                        wrapper.appendChild(pre);
+                                                    }
+                                                });
+                                            });
+
+                                            if (newRegenerateResponse.success) {
+                                                // 更新历史记录中对应order的消息
+                                                messageHistory[finalOrder] = {
+                                                    role: "assistant",
+                                                    content: newRegenerateResponse.content,
+                                                    timestamp: Date.now(),
+                                                    order: finalOrder
+                                                };
+
+                                                // 保存到数据库
+                                                await saveChatToDatabase();
+
+                                                // 在响应完成后为所有代码块添加复制按钮
+                                                messageDiv.querySelectorAll('.code-block-wrapper').forEach(wrapper => {
+                                                    if (!wrapper.querySelector('.copy-button')) {
+                                                        const copyButton = document.createElement('button');
+                                                        copyButton.className = 'copy-button';
+                                                        copyButton.textContent = 'Copy code';
+                                                        copyButton.onclick = () => copyCode(copyButton);
+                                                        wrapper.appendChild(copyButton);
+                                                    }
+                                                });
+
+                                                // 重新添加消息操作按钮（递归添加，复用相同的逻辑）
+                                                const recursiveActionButtons = document.createElement('div');
+                                                recursiveActionButtons.className = 'message-actions';
+                                                
+                                                // 复制按钮
+                                                const recursiveCopyButton = document.createElement('button');
+                                                recursiveCopyButton.className = 'action-button';
+                                                recursiveCopyButton.innerHTML = newCopyMessageButton.innerHTML;
+                                                recursiveCopyButton.title = '复制回答';
+                                                recursiveCopyButton.onclick = () => {
+                                                    navigator.clipboard.writeText(newRegenerateResponse.content).then(() => {
+                                                        recursiveCopyButton.classList.add('copied');
+                                                        setTimeout(() => recursiveCopyButton.classList.remove('copied'), 2000);
+                                                    });
+                                                };
+
+                                                // 重新添加重新回答按钮（使用递归逻辑，但简化处理）
+                                                const recursiveRegenerateButton = document.createElement('button');
+                                                recursiveRegenerateButton.className = 'action-button';
+                                                recursiveRegenerateButton.innerHTML = reRegenerateButton.innerHTML;
+                                                recursiveRegenerateButton.title = '重新回答';
+                                                // 递归调用：使用新内容创建新的onclick函数
+                                                const recursiveContent = newRegenerateResponse.content;
+                                                recursiveRegenerateButton.onclick = async () => {
+                                                    messageDiv.innerHTML = '';
+                                                    const recursiveOrder = messageHistory.findIndex(m => 
+                                                        m.role === 'assistant' && 
+                                                        m.content === recursiveContent
+                                                    );
+                                                    const finalRecursiveOrder = recursiveOrder !== -1 ? recursiveOrder : finalOrder;
+                                                    const previousRecursiveMessages = messageHistory.filter((m, index) => index < finalRecursiveOrder);
+                                                    const typingIndicator = document.createElement('div');
+                                                    typingIndicator.className = 'typing-indicator';
+                                                    typingIndicator.innerHTML = '<span></span><span></span><span></span>';
+                                                    messageDiv.appendChild(typingIndicator);
+                                                    
+                                                    try {
+                                                        const messages = buildMessages(previousRecursiveMessages);
+                                                        let textContainer = null;
+                                                        let accumulatedText = '';
+                                                        let currentIndex = 0;
+
+                                                        const response = await sendToAPI(messages, async (chunk) => {
+                                                            if (currentIndex === 0) {
+                                                                messageDiv.innerHTML = '';
+                                                                textContainer = document.createElement('div');
+                                                                messageDiv.appendChild(textContainer);
+                                                            }
+                                                            accumulatedText += chunk;
+                                                            currentIndex += chunk.length;
+                                                            let processedHTML = accumulatedText;
+                                                            if (accumulatedText.includes('<sy_think>') && accumulatedText.includes('<search_references>')) {
+                                                                processedHTML = processThinkingTags(accumulatedText);
+                                                                textContainer.innerHTML = processedHTML;
+                                                                const thinkingHeaders = textContainer.querySelectorAll('.thinking-header');
+                                                                const thinkingContents = textContainer.querySelectorAll('.thinking-content');
+                                                                thinkingHeaders.forEach(h => h.classList.add('expanded'));
+                                                                thinkingContents.forEach(c => c.style.display = 'block');
+                                                            } else if (accumulatedText.includes('<sy_think>')) {
+                                                                processedHTML = processThinkingTags(accumulatedText);
+                                                                textContainer.innerHTML = processedHTML;
+                                                                const thinkingHeaders = textContainer.querySelectorAll('.thinking-header');
+                                                                const thinkingContents = textContainer.querySelectorAll('.thinking-content');
+                                                                thinkingHeaders.forEach(h => h.classList.add('expanded'));
+                                                                thinkingContents.forEach(c => c.style.display = 'block');
+                                                            } else if (accumulatedText.includes('<search_references>')) {
+                                                                processMessageWithReferences(accumulatedText, messageDiv);
+                                                            } else {
+                                                                textContainer.innerHTML = marked.parse(accumulatedText);
+                                                            }
+                                                            textContainer.querySelectorAll('pre code').forEach(block => {
+                                                                hljs.highlightElement(block);
+                                                                const pre = block.parentElement;
+                                                                if (!pre.parentElement?.classList.contains('code-block-wrapper')) {
+                                                                    const wrapper = document.createElement('div');
+                                                                    wrapper.className = 'code-block-wrapper';
+                                                                    const match = block.className.match(/language-([^:]+)(?::(.+))?/);
+                                                                    if (match) {
+                                                                        wrapper.setAttribute('data-language', match[1]);
+                                                                        if (match[2]) wrapper.setAttribute('data-filename', match[2]);
+                                                                    }
+                                                                    pre.parentNode.insertBefore(wrapper, pre);
+                                                                    wrapper.appendChild(pre);
+                                                                }
+                                                            });
+                                                        });
+
+                                                        if (response.success) {
+                                                            messageHistory[finalRecursiveOrder] = {
+                                                                role: "assistant",
+                                                                content: response.content,
+                                                                timestamp: Date.now(),
+                                                                order: finalRecursiveOrder
+                                                            };
+                                                            await saveChatToDatabase();
+                                                            messageDiv.querySelectorAll('.code-block-wrapper').forEach(wrapper => {
+                                                                if (!wrapper.querySelector('.copy-button')) {
+                                                                    const copyButton = document.createElement('button');
+                                                                    copyButton.className = 'copy-button';
+                                                                    copyButton.textContent = 'Copy code';
+                                                                    copyButton.onclick = () => copyCode(copyButton);
+                                                                    wrapper.appendChild(copyButton);
+                                                                }
+                                                            });
+                                                            // 重新添加消息操作按钮（确保按钮始终存在）
+                                                            const newRecursiveActionButtons = document.createElement('div');
+                                                            newRecursiveActionButtons.className = 'message-actions';
+                                                            
+                                                            // 复制按钮
+                                                            const newRecursiveCopyButton = document.createElement('button');
+                                                            newRecursiveCopyButton.className = 'action-button';
+                                                            newRecursiveCopyButton.innerHTML = recursiveCopyButton.innerHTML;
+                                                            newRecursiveCopyButton.title = '复制回答';
+                                                            newRecursiveCopyButton.onclick = () => {
+                                                                navigator.clipboard.writeText(response.content).then(() => {
+                                                                    newRecursiveCopyButton.classList.add('copied');
+                                                                    setTimeout(() => newRecursiveCopyButton.classList.remove('copied'), 2000);
+                                                                });
+                                                            };
+                                                            
+                                                            // 重新回答按钮 - 使用新的响应内容创建新的onclick函数
+                                                            const newRecursiveRegenerateButton = document.createElement('button');
+                                                            newRecursiveRegenerateButton.className = 'action-button';
+                                                            newRecursiveRegenerateButton.innerHTML = recursiveRegenerateButton.innerHTML;
+                                                            newRecursiveRegenerateButton.title = '重新回答';
+                                                            // 递归：使用新内容创建新的onclick函数
+                                                            const newRecursiveContent = response.content;
+                                                            // 创建新的onclick函数，结构与recursiveRegenerateButton.onclick相同，但使用新内容
+                                                            newRecursiveRegenerateButton.onclick = async () => {
+                                                                messageDiv.innerHTML = '';
+                                                                const newRecursiveOrder = messageHistory.findIndex(m => 
+                                                                    m.role === 'assistant' && 
+                                                                    m.content === newRecursiveContent
+                                                                );
+                                                                const newFinalRecursiveOrder = newRecursiveOrder !== -1 ? newRecursiveOrder : finalRecursiveOrder;
+                                                                const newPreviousRecursiveMessages = messageHistory.filter((m, index) => index < newFinalRecursiveOrder);
+                                                                const typingIndicator = document.createElement('div');
+                                                                typingIndicator.className = 'typing-indicator';
+                                                                typingIndicator.innerHTML = '<span></span><span></span><span></span>';
+                                                                messageDiv.appendChild(typingIndicator);
+                                                                
+                                                                try {
+                                                                    const messages = buildMessages(newPreviousRecursiveMessages);
+                                                                    let textContainer = null;
+                                                                    let accumulatedText = '';
+                                                                    let currentIndex = 0;
+
+                                                                    const newResponse = await sendToAPI(messages, async (chunk) => {
+                                                                        if (currentIndex === 0) {
+                                                                            messageDiv.innerHTML = '';
+                                                                            textContainer = document.createElement('div');
+                                                                            messageDiv.appendChild(textContainer);
+                                                                        }
+                                                                        accumulatedText += chunk;
+                                                                        currentIndex += chunk.length;
+                                                                        let processedHTML = accumulatedText;
+                                                                        if (accumulatedText.includes('<sy_think>') && accumulatedText.includes('<search_references>')) {
+                                                                            processedHTML = processThinkingTags(accumulatedText);
+                                                                            textContainer.innerHTML = processedHTML;
+                                                                            const thinkingHeaders = textContainer.querySelectorAll('.thinking-header');
+                                                                            const thinkingContents = textContainer.querySelectorAll('.thinking-content');
+                                                                            thinkingHeaders.forEach(h => h.classList.add('expanded'));
+                                                                            thinkingContents.forEach(c => c.style.display = 'block');
+                                                                        } else if (accumulatedText.includes('<sy_think>')) {
+                                                                            processedHTML = processThinkingTags(accumulatedText);
+                                                                            textContainer.innerHTML = processedHTML;
+                                                                            const thinkingHeaders = textContainer.querySelectorAll('.thinking-header');
+                                                                            const thinkingContents = textContainer.querySelectorAll('.thinking-content');
+                                                                            thinkingHeaders.forEach(h => h.classList.add('expanded'));
+                                                                            thinkingContents.forEach(c => c.style.display = 'block');
+                                                                        } else if (accumulatedText.includes('<search_references>')) {
+                                                                            processMessageWithReferences(accumulatedText, messageDiv);
+                                                                        } else {
+                                                                            textContainer.innerHTML = marked.parse(accumulatedText);
+                                                                        }
+                                                                        textContainer.querySelectorAll('pre code').forEach(block => {
+                                                                            hljs.highlightElement(block);
+                                                                            const pre = block.parentElement;
+                                                                            if (!pre.parentElement?.classList.contains('code-block-wrapper')) {
+                                                                                const wrapper = document.createElement('div');
+                                                                                wrapper.className = 'code-block-wrapper';
+                                                                                const match = block.className.match(/language-([^:]+)(?::(.+))?/);
+                                                                                if (match) {
+                                                                                    wrapper.setAttribute('data-language', match[1]);
+                                                                                    if (match[2]) wrapper.setAttribute('data-filename', match[2]);
+                                                                                }
+                                                                                pre.parentNode.insertBefore(wrapper, pre);
+                                                                                wrapper.appendChild(pre);
+                                                                            }
+                                                                        });
+                                                                    });
+
+                                                                    if (newResponse.success) {
+                                                                        messageHistory[newFinalRecursiveOrder] = {
+                                                                            role: "assistant",
+                                                                            content: newResponse.content,
+                                                                            timestamp: Date.now(),
+                                                                            order: newFinalRecursiveOrder
+                                                                        };
+                                                                        await saveChatToDatabase();
+                                                                        messageDiv.querySelectorAll('.code-block-wrapper').forEach(wrapper => {
+                                                                            if (!wrapper.querySelector('.copy-button')) {
+                                                                                const copyButton = document.createElement('button');
+                                                                                copyButton.className = 'copy-button';
+                                                                                copyButton.textContent = 'Copy code';
+                                                                                copyButton.onclick = () => copyCode(copyButton);
+                                                                                wrapper.appendChild(copyButton);
+                                                                            }
+                                                                        });
+                                                                        
+                                                                        // 继续递归添加按钮
+                                                                        const continueActionButtons = document.createElement('div');
+                                                                        continueActionButtons.className = 'message-actions';
+                                                                        
+                                                                        const continueCopyButton = document.createElement('button');
+                                                                        continueCopyButton.className = 'action-button';
+                                                                        continueCopyButton.innerHTML = newRecursiveCopyButton.innerHTML;
+                                                                        continueCopyButton.title = '复制回答';
+                                                                        continueCopyButton.onclick = () => {
+                                                                            navigator.clipboard.writeText(newResponse.content).then(() => {
+                                                                                continueCopyButton.classList.add('copied');
+                                                                                setTimeout(() => continueCopyButton.classList.remove('copied'), 2000);
+                                                                            });
+                                                                        };
+                                                                        
+                                                                        const continueRegenerateButton = document.createElement('button');
+                                                                        continueRegenerateButton.className = 'action-button';
+                                                                        continueRegenerateButton.innerHTML = newRecursiveRegenerateButton.innerHTML;
+                                                                        continueRegenerateButton.title = '重新回答';
+                                                                        // 递归调用：创建新的onclick函数使用新内容
+                                                                        const continueContent = newResponse.content;
+                                                                        continueRegenerateButton.onclick = newRecursiveRegenerateButton.onclick; // 复用相同的逻辑结构
+                                                                        
+                                                                        continueActionButtons.appendChild(continueCopyButton);
+                                                                        continueActionButtons.appendChild(continueRegenerateButton);
+                                                                        messageDiv.appendChild(continueActionButtons);
+                                                                    }
+                                                                } catch (error) {
+                                                                    console.error('Regenerate Error:', error);
+                                                                    messageDiv.innerHTML = '重新生成回答时发生错误，请稍后重试';
+                                                                }
+                                                            };
+                                                            
+                                                            newRecursiveActionButtons.appendChild(newRecursiveCopyButton);
+                                                            newRecursiveActionButtons.appendChild(newRecursiveRegenerateButton);
+                                                            messageDiv.appendChild(newRecursiveActionButtons);
+                                                        }
+                                                    } catch (error) {
+                                                        console.error('Regenerate Error:', error);
+                                                        messageDiv.innerHTML = '重新生成回答时发生错误，请稍后重试';
+                                                    }
+                                                };
+
+                                                recursiveActionButtons.appendChild(recursiveCopyButton);
+                                                recursiveActionButtons.appendChild(recursiveRegenerateButton);
+                                                messageDiv.appendChild(recursiveActionButtons);
+                                            }
+                                        } catch (error) {
+                                            console.error('Regenerate Error:', error);
+                                            messageDiv.innerHTML = '重新生成回答时发生错误，请稍后重试';
+                                        }
+                                    };
+
+                                    newActionButtons.appendChild(newCopyMessageButton);
+                                    newActionButtons.appendChild(reRegenerateButton);
+                                    messageDiv.appendChild(newActionButtons);
+                                }
+                            } catch (error) {
+                                console.error('Regenerate Error:', error);
+                                messageDiv.innerHTML = '重新生成回答时发生错误，请稍后重试';
+                            }
+                        };
+
+                        actionButtons.appendChild(copyMessageButton);
+                        actionButtons.appendChild(newRegenerateButton);
+                        messageDiv.appendChild(actionButtons);
                     }
                 } else {
                     // 用户消息直接显示
@@ -695,8 +1374,9 @@ function updateChatHistoryUI() {
 function loadChat(chat) {
     messageHistory.length = 0;
     
-    // 直接加载消息，保持原始顺序
-    messageHistory.push(...chat.messages);
+    // 确保消息按照order排序后再加载
+    const sortedMessages = chat.messages.sort((a, b) => a.order - b.order);
+    messageHistory.push(...sortedMessages);
     
     document.getElementById('main-chat-messages').innerHTML = '';
     messageHistory.forEach(msg => {
@@ -709,7 +1389,7 @@ function loadChat(chat) {
     });
     
     // 滚动到底部
-    const chatMessages = document.getElementById('main-chat-messages');
+            const chatMessages = document.getElementById('main-chat-messages');
     chatMessages.scrollTop = chatMessages.scrollHeight;
     
     // 更新本地存储
@@ -740,6 +1420,17 @@ async function deleteChatHistory(chatId) {
         const data = await response.json();
         
         if (data.success) {
+            // 如果删除的是当前对话，清空聊天区域
+            if (chat.id === currentChatId) {
+                currentChatId = null;
+                document.getElementById('main-chat-messages').innerHTML = '';
+                messageHistory.length = 0;
+                
+                // 显示欢迎消息
+                const welcomeMessage = '你好呀，有什么可以帮忙的？';
+                addMessage(welcomeMessage, 'ai', 'main-chat-messages');
+            }
+            
             // 重新加载聊天历史
             await loadUserChatHistory();
         } else {
@@ -803,8 +1494,14 @@ async function getMessages(chatId) {
         const data = await response.json();
         
         if (data.success) {
-            // 根据消息的顺序排序，确保顺序与保存时一致
-            return data.messages.sort((a, b) => a.order - b.order);
+            // 确保消息按照order属性排序
+            return data.messages.sort((a, b) => {
+                // 如果没有order属性，使用timestamp作为备选
+                if (a.order === undefined || b.order === undefined) {
+                    return (a.timestamp || 0) - (b.timestamp || 0);
+                }
+                return a.order - b.order;
+            });
         } else {
             throw new Error(data.error || '获取消息失败');
         }
@@ -944,7 +1641,8 @@ document.addEventListener('DOMContentLoaded', function() {
         <div class="model-dropdown" id="modelDropdown">
             <div class="model-option" data-model="yuanzhi">鸢栀助手</div>
             <div class="model-option" data-model="gpt">通用助手</div>
-            <div class="model-option" data-model="draw">绘画助手</div>
+            <div class="model-option" data-model="deepseek">DeepSeek</div>
+            
         </div>
         <button class="model-button" id="modelButton">
             <span class="model-name">鸢栀助手</span>
@@ -1050,13 +1748,15 @@ async function sendMainMessage() {
     userInput.disabled = true;
     const sendButton = document.getElementById('send-button');
     sendButton.disabled = true;
+    let messageDiv = null;
 
     try {
-        // 添加用户消息到历史记录时包含时间戳
+        // 添加用户消息到历史记录
         messageHistory.push({
             role: "user",
             content: message,
-            timestamp: Date.now()
+            timestamp: Date.now(),
+            order: messageHistory.length
         });
 
         addMessage(message, 'user', 'main-chat-messages');
@@ -1064,193 +1764,1311 @@ async function sendMainMessage() {
         userInput.style.height = '45px';
         sendButton.style.height = '45px';
 
-        const currentModel = getCurrentModel();
-        // 检查当前模型是否绘画模型
-        if (currentModel === 'draw') {
-            // 添加骨架屏
-            const loadingDiv = document.createElement('div');
-            loadingDiv.className = 'message assistant-message';
-            loadingDiv.innerHTML = `
-                <div class="image-loading">
-                    <div class="image-skeleton"></div>
-                    <div class="image-loading-text">正在生成图片请稍候...</div>
+        // 如果是搜索模式，先进行搜索
+        if (isSearchMode) {
+            // 添加搜索状态消息
+            const searchStatusDiv = document.createElement('div');
+            searchStatusDiv.className = 'message assistant-message';
+            const chatMessages = document.getElementById('main-chat-messages');
+            chatMessages.appendChild(searchStatusDiv);
+            
+            // 创建搜索状态内容
+            const searchStatusContent = document.createElement('div');
+            searchStatusContent.className = 'search-status-message';
+            searchStatusContent.innerHTML = `
+                <div class="search-icon">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="11" cy="11" r="8"></circle>
+                        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                    </svg>
                 </div>
+                <div class="search-text">正在联网搜索...</div>
+                <div class="search-progress"></div>
             `;
-            document.getElementById('main-chat-messages').appendChild(loadingDiv);
+            searchStatusDiv.appendChild(searchStatusContent);
             
-            const response = await sendDrawRequest(message);
-            
-            if (response.success && response.imageUrl) {
-                // 移除骨架屏
-                loadingDiv.remove();
+            try {
+                const searchResults = await searchWithTavily(message);
                 
-                // 添加生成的图片
-                const imageMessage = `Generated image: ${response.imageUrl}`;
-                addMessage(imageMessage, 'assistant', 'main-chat-messages');
+                // 移除搜索状态消息
+                searchStatusDiv.remove();
                 
-                // 添加到消息历史
-                messageHistory.push({
-                    role: "assistant",
-                    content: imageMessage,
-                    timestamp: Date.now()
-                });
+                // 将搜索结果整理为上下文信息
+                const searchContext = searchResults.map(result => 
+                    `标题: ${result.title}\n内容: ${result.content}\n链接: ${result.url}`
+                ).join('\n\n');
+                
+                // 保存搜索结果供后续显示引用
+                const references = searchResults.map(result => ({
+                    title: result.title,
+                    content: result.content.substring(0, 150) + (result.content.length > 150 ? '...' : ''),
+                    url: result.url
+                }));
+                
+                // 添加包含搜索上下文的系统消息到消息历史（临时，不会保存到数据库）
+                // 创建一个临时的消息历史数组用于发送请求
+                const tempMessageHistory = [
+                    ...messageHistory,
+                    {
+                        role: "system",
+                        content: `以下是关于用户问题"${message}"的网络搜索结果，请基于这些信息回答用户的问题。在回答中适当引用这些信息来源，并且在回答的末尾简要总结使用了哪些信息来源：\n\n${searchContext}`
+                    }
+                ];
+                
+                // 创建新的消息容器
+                const chatMessages = document.getElementById('main-chat-messages');
+                
+                // 添加打字机动画
+                addTypingIndicator();
 
-                // 保存到数据库
                 try {
-                    const formData = new FormData();
-                    formData.append('action', 'saveChatHistory');
-                    
-                    // 使用第一条用户消息作为标题
-                    const firstUserMessage = messageHistory.find(msg => msg.role === 'user');
-                    let chatTitle = firstUserMessage ? firstUserMessage.content : '新对话';
-                    
-                    // 添加消息序号，确保顺序
-                    const messagesWithOrder = messageHistory.map((msg, index) => ({
-                        ...msg,
-                        order: index
-                    }));
-                    
-                    formData.append('title', chatTitle);
-                    formData.append('messages', JSON.stringify(messagesWithOrder));
-                    
-                    // 如果是现有对话，添加 chatId
-                    if (currentChatId) {
-                        formData.append('chatId', currentChatId);
-                    }
-                    
-                    const saveResponse = await fetch('api.php', {
-                        method: 'POST',
-                        body: formData
-                    });
-                    
-                    const saveData = await saveResponse.json();
-                    
-                    if (saveData.success) {
-                        // 更新当前对话ID
-                        if (!currentChatId) {
-                            currentChatId = saveData.chatId;
+                    // 使用临时消息历史发送API请求
+                    const messages = buildMessages(tempMessageHistory);
+                    let textContainer = null;
+                    let accumulatedText = '';
+                    let currentIndex = 0;
+
+                    const response = await sendToAPI(messages, async (chunk) => {
+                        // 在第一次收到响应时创建消息容器
+                        if (currentIndex === 0) {
+                            removeTypingIndicator();
+            messageDiv = document.createElement('div');
+            messageDiv.className = 'message assistant-message';
+            chatMessages.appendChild(messageDiv);
+            
+                            textContainer = document.createElement('div');
+                            messageDiv.appendChild(textContainer);
                         }
-                        // 重新加载聊天历史列表
-                        await loadUserChatHistory();
-                    }
-                } catch (error) {
-                    console.error('保存聊天历史失败:', error);
-                }
-            } else {
-                // 移除骨架屏
-                loadingDiv.remove();
-                // 显示错误消息
-                const errorMessage = '生成图片失败，请稍后重试。';
-                addMessage(errorMessage, 'assistant', 'main-chat-messages');
+                        
+                        accumulatedText += chunk;
+                        currentIndex += chunk.length;
+                        
+                // 处理思考过程
+                        let processedHTML = accumulatedText;
+                        
+                        // 检查是否有思考标签和引用标签
+                        if (accumulatedText.includes('<sy_think>') && accumulatedText.includes('<search_references>')) {
+                            // 同时包含思考标签和引用标签
+                            processedHTML = processThinkingTags(accumulatedText);
+                            textContainer.innerHTML = processedHTML;
+                            
+                            // 确保思考内容区域展开
+                            const thinkingHeaders = textContainer.querySelectorAll('.thinking-header');
+                            const thinkingContents = textContainer.querySelectorAll('.thinking-content');
+                            
+                            thinkingHeaders.forEach(header => {
+                                header.classList.add('expanded');
+                            });
+                            
+                            thinkingContents.forEach(content => {
+                                content.style.display = 'block';
+                            });
+                        } else if (accumulatedText.includes('<sy_think>')) {
+                            // 只有思考标签
+                            processedHTML = processThinkingTags(accumulatedText);
+                            textContainer.innerHTML = processedHTML;
                 
-                // 添加错误消息到历史记录并保存
+                            // 确保思考内容区域展开
+                            const thinkingHeaders = textContainer.querySelectorAll('.thinking-header');
+                            const thinkingContents = textContainer.querySelectorAll('.thinking-content');
+                
+                            thinkingHeaders.forEach(header => {
+                                header.classList.add('expanded');
+                            });
+                
+                            thinkingContents.forEach(content => {
+                                content.style.display = 'block';
+                            });
+                        } else if (accumulatedText.includes('<search_references>')) {
+                            // 只有引用标签
+                            processMessageWithReferences(accumulatedText, messageDiv);
+                        } else {
+                            // 使用 marked 解析累积的文本
+                            textContainer.innerHTML = marked.parse(accumulatedText);
+                        }
+                        
+                        // 处理代码块
+                        textContainer.querySelectorAll('pre code').forEach(block => {
+                            hljs.highlightElement(block);
+                            
+                            // 检查是否已经有包装器
+                            const pre = block.parentElement;
+                            if (!pre.parentElement?.classList.contains('code-block-wrapper')) {
+                    const wrapper = document.createElement('div');
+                    wrapper.className = 'code-block-wrapper';
+                    
+                    // 解析语言和文件名
+                                const match = block.className.match(/language-([^:]+)(?::(.+))?/);
+                    if (match) {
+                        const language = match[1];
+                        const filename = match[2];
+                        wrapper.setAttribute('data-language', language);
+                        if (filename) {
+                            wrapper.setAttribute('data-filename', filename);
+                        }
+                    }
+                    
+                    pre.parentNode.insertBefore(wrapper, pre);
+                    wrapper.appendChild(pre);
+                            }
+                        });
+                    });
+
+                    if (response.success) {
+                        // 添加搜索标记到回复
+                        const responseWithSearchNote = response.content;
+                        
+                        // 添加引用内容
+                        const referenceContainer = document.createElement('div');
+                        referenceContainer.className = 'reference-container';
+                        
+                        const referencesHTML = `
+                            <h5>
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <circle cx="12" cy="12" r="10"/>
+                                    <path d="M2 12h20"/>
+                                    <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+                                </svg>
+                                引用内容:
+                            </h5>
+                            <ul>
+                                ${references.map(ref => `
+                                    <li>
+                                        <a href="${ref.url}" target="_blank" rel="noopener noreferrer">${ref.title}</a>
+                                    </li>
+                                `).join('')}
+                            </ul>
+                        `;
+                        
+                        referenceContainer.innerHTML = referencesHTML;
+                        messageDiv.appendChild(referenceContainer);
+                        
+                        // 将引用数据添加到回复内容中，使用特殊标记包裹，便于后续解析
+                        const referencesData = JSON.stringify(references);
+                        const contentWithReferences = `${responseWithSearchNote}\n<search_references>${referencesData}</search_references>`;
+                        
+                        // 添加AI回复到历史记录（包含引用数据但用特殊标记隐藏）
+                        const newMessage = {
+                            role: "assistant",
+                            content: contentWithReferences,
+                            timestamp: Date.now(),
+                            order: messageHistory.length
+                        };
+                        messageHistory.push(newMessage);
+
+                        // 保存到数据库
+                        try {
+                            const formData = new FormData();
+                            formData.append('action', 'saveChatHistory');
+                            
+                            const firstUserMessage = messageHistory.find(msg => msg.role === 'user');
+                            let chatTitle = firstUserMessage ? firstUserMessage.content : '新对话';
+                            
+                            formData.append('title', chatTitle);
+                            formData.append('messages', JSON.stringify(messageHistory));
+                            
+                            if (currentChatId) {
+                                formData.append('chatId', currentChatId);
+                            }
+                            
+                            const saveResponse = await fetch('api.php', {
+                                method: 'POST',
+                                body: formData
+                            });
+                            
+                            if (!saveResponse.ok) {
+                                const errorText = await saveResponse.text();
+                                console.error('保存失败:', errorText);
+                                throw new Error(`保存失败: ${saveResponse.status} ${saveResponse.statusText}`);
+                            }
+                            
+                            const saveData = await saveResponse.json();
+                            
+                            if (saveData.success) {
+                                if (!currentChatId) {
+                                    currentChatId = saveData.chatId;
+                                }
+                                await loadUserChatHistory();
+                } else {
+                                throw new Error(saveData.error || '保存失败');
+                }
+            } catch (error) {
+                            console.error('保存聊天历史失败:', error);
+                            // 添加错误消息到聊天
+                            const errorMessage = '保存聊天记录失败，但消息已发送';
+                            addMessage(errorMessage, 'assistant', 'main-chat-messages');
+                        }
+
+                        // 在响应完成后为所有代码块添加复制按钮
+                        messageDiv.querySelectorAll('.code-block-wrapper').forEach(wrapper => {
+                            if (!wrapper.querySelector('.copy-button')) {
+                    const copyButton = document.createElement('button');
+                    copyButton.className = 'copy-button';
+                    copyButton.textContent = 'Copy code';
+                    copyButton.onclick = () => copyCode(copyButton);
+                    wrapper.appendChild(copyButton);
+                }
+            });
+            
+            // 添加消息操作按钮
+                const actionButtons = document.createElement('div');
+                actionButtons.className = 'message-actions';
+                
+                // 复制按钮
+                const copyMessageButton = document.createElement('button');
+                copyMessageButton.className = 'action-button';
+                copyMessageButton.innerHTML = `
+                    <span class="copy-icon">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                        </svg>
+                    </span>
+                    <span class="check-icon">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="20 6 9 17 4 12"></polyline>
+                        </svg>
+                    </span>
+                `;
+                copyMessageButton.title = '复制回答';
+                copyMessageButton.onclick = () => {
+                            navigator.clipboard.writeText(response.content).then(() => {
+                        copyMessageButton.classList.add('copied');
+                        setTimeout(() => copyMessageButton.classList.remove('copied'), 2000);
+                    });
+                };
+                
+                // 重新回答按钮
+                        const newRegenerateButton = document.createElement('button');
+                        newRegenerateButton.className = 'action-button';
+                        newRegenerateButton.innerHTML = `
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.3"/>
+                    </svg>
+                `;
+                        newRegenerateButton.title = '重新回答';
+                        newRegenerateButton.onclick = async () => {
+                            // 移除当前回答的内容，但保留消息容器
+                            messageDiv.innerHTML = '';
+                            
+                            // 获取当前消息的order - 使用contentWithReferences来匹配
+                            const currentMessageOrder = messageHistory.findIndex(m => 
+                                m.role === 'assistant' && 
+                                m.content === contentWithReferences
+                            );
+
+                            // 创建一个新的消息历史，只包含当前消息之前的对话
+                            const previousMessages = messageHistory.filter((m, index) => index < currentMessageOrder);
+                            
+                        // 添加打字机动画
+                        const typingIndicator = document.createElement('div');
+                        typingIndicator.className = 'typing-indicator';
+                        typingIndicator.innerHTML = '<span></span><span></span><span></span>';
+                        messageDiv.appendChild(typingIndicator);
+                        
+                        try {
+                                // 使用截至当前消息之前的历史记录重新请求回答
+                            const messages = buildMessages(previousMessages);
+                                let textContainer = null;
+                                let accumulatedText = '';
+                                let currentIndex = 0;
+
+                                const regenerateResponse = await sendToAPI(messages, async (chunk) => {
+                                    // 在第一次收到响应时创建文本容器
+                                    if (currentIndex === 0) {
+                                        messageDiv.innerHTML = ''; // 清除打字机动画
+                                        textContainer = document.createElement('div');
+                                        messageDiv.appendChild(textContainer);
+                                    }
+
+                                    accumulatedText += chunk;
+                                    currentIndex += chunk.length;
+
+                                    // 处理思考过程
+                                    let processedHTML = accumulatedText;
+                                    
+                                    // 检查是否有思考标签和引用标签
+                                    if (accumulatedText.includes('<sy_think>') && accumulatedText.includes('<search_references>')) {
+                                        // 同时包含思考标签和引用标签
+                                        processedHTML = processThinkingTags(accumulatedText);
+                                        textContainer.innerHTML = processedHTML;
+                                        
+                                        // 确保思考内容区域展开
+                                        const thinkingHeaders = textContainer.querySelectorAll('.thinking-header');
+                                        const thinkingContents = textContainer.querySelectorAll('.thinking-content');
+                                        
+                                        thinkingHeaders.forEach(header => {
+                                            header.classList.add('expanded');
+                                        });
+                                        
+                                        thinkingContents.forEach(content => {
+                                            content.style.display = 'block';
+                                        });
+                                    } else if (accumulatedText.includes('<sy_think>')) {
+                                        // 只有思考标签
+                                        processedHTML = processThinkingTags(accumulatedText);
+                                        textContainer.innerHTML = processedHTML;
+                
+                                        // 确保思考内容区域展开
+                                        const thinkingHeaders = textContainer.querySelectorAll('.thinking-header');
+                                        const thinkingContents = textContainer.querySelectorAll('.thinking-content');
+                
+                                        thinkingHeaders.forEach(header => {
+                                            header.classList.add('expanded');
+                                        });
+                
+                                        thinkingContents.forEach(content => {
+                                            content.style.display = 'block';
+                                        });
+                                    } else if (accumulatedText.includes('<search_references>')) {
+                                        // 只有引用标签
+                                        processMessageWithReferences(accumulatedText, messageDiv);
+                                    } else {
+                                        // 使用 marked 解析累积的文本
+                                        textContainer.innerHTML = marked.parse(accumulatedText);
+                                    }
+                                    
+                                    // 处理代码块
+                                    textContainer.querySelectorAll('pre code').forEach(block => {
+                                        hljs.highlightElement(block);
+                                        
+                                        // 检查是否已经有包装器
+                                        const pre = block.parentElement;
+                                        if (!pre.parentElement?.classList.contains('code-block-wrapper')) {
+                                            const wrapper = document.createElement('div');
+                                            wrapper.className = 'code-block-wrapper';
+                                            
+                                            // 解析语言和文件名
+                                            const match = block.className.match(/language-([^:]+)(?::(.+))?/);
+                                            if (match) {
+                                                const language = match[1];
+                                                const filename = match[2];
+                                                wrapper.setAttribute('data-language', language);
+                                                if (filename) {
+                                                    wrapper.setAttribute('data-filename', filename);
+                                                }
+                                            }
+                                            
+                                            pre.parentNode.insertBefore(wrapper, pre);
+                                            wrapper.appendChild(pre);
+                                        }
+                                    });
+                                });
+
+                                if (regenerateResponse.success) {
+                                    // 更新历史记录中对应order的消息
+                                    messageHistory[currentMessageOrder] = {
+                                        role: "assistant",
+                                        content: regenerateResponse.content,
+                                        timestamp: Date.now(),
+                                        order: currentMessageOrder
+                                    };
+
+
+                                    // 保存到数据库
+                                    await saveChatToDatabase();
+
+                                    // 在响应完成后为所有代码块添加复制按钮
+                                    messageDiv.querySelectorAll('.code-block-wrapper').forEach(wrapper => {
+                                        if (!wrapper.querySelector('.copy-button')) {
+                                            const copyButton = document.createElement('button');
+                                            copyButton.className = 'copy-button';
+                                            copyButton.textContent = 'Copy code';
+                                            copyButton.onclick = () => copyCode(copyButton);
+                                            wrapper.appendChild(copyButton);
+                                        }
+                                    });
+
+                                    // 重新添加消息操作按钮
+                                    const newActionButtons = document.createElement('div');
+                                    newActionButtons.className = 'message-actions';
+                                    
+                                    // 复制按钮
+                                    const newCopyMessageButton = document.createElement('button');
+                                    newCopyMessageButton.className = 'action-button';
+                                    newCopyMessageButton.innerHTML = copyMessageButton.innerHTML;
+                                    newCopyMessageButton.title = '复制回答';
+                                    newCopyMessageButton.onclick = () => {
+                                        navigator.clipboard.writeText(regenerateResponse.content).then(() => {
+                                            newCopyMessageButton.classList.add('copied');
+                                            setTimeout(() => newCopyMessageButton.classList.remove('copied'), 2000);
+                                        });
+                                    };
+
+                                    // 重新添加重新回答按钮 - 使用更新后的内容进行匹配
+                                    const reRegenerateButton = document.createElement('button');
+                                    reRegenerateButton.className = 'action-button';
+                                    reRegenerateButton.innerHTML = newRegenerateButton.innerHTML;
+                                    reRegenerateButton.title = '重新回答';
+                                    // 创建一个新的onclick函数，使用更新后的内容来匹配
+                                    const updatedContent = regenerateResponse.content;
+                                    reRegenerateButton.onclick = async () => {
+                                        // 移除当前回答的内容，但保留消息容器
+                                        messageDiv.innerHTML = '';
+                                        
+                                        // 获取当前消息的order - 使用更新后的内容来匹配
+                                        const messageOrder = messageHistory.findIndex(m => 
+                                            m.role === 'assistant' && 
+                                            m.content === updatedContent
+                                        );
+                                        
+                                        // 如果找不到，尝试使用currentMessageOrder
+                                        const finalOrder = messageOrder !== -1 ? messageOrder : currentMessageOrder;
+                                        
+                                        // 创建一个新的消息历史，只包含当前消息之前的对话
+                                        const previousMessages = messageHistory.filter((m, index) => index < finalOrder);
+                                        
+                                        // 添加打字机动画
+                                        const typingIndicator = document.createElement('div');
+                                        typingIndicator.className = 'typing-indicator';
+                                        typingIndicator.innerHTML = '<span></span><span></span><span></span>';
+                                        messageDiv.appendChild(typingIndicator);
+                                        
+                                        try {
+                                            // 使用截至当前消息之前的历史记录重新请求回答
+                                            const messages = buildMessages(previousMessages);
+                                            let textContainer = null;
+                                            let accumulatedText = '';
+                                            let currentIndex = 0;
+
+                                            const newRegenerateResponse = await sendToAPI(messages, async (chunk) => {
+                                                // 在第一次收到响应时创建文本容器
+                                                if (currentIndex === 0) {
+                                                    messageDiv.innerHTML = ''; // 清除打字机动画
+                                                    textContainer = document.createElement('div');
+                                                    messageDiv.appendChild(textContainer);
+                                                }
+
+                                                accumulatedText += chunk;
+                                                currentIndex += chunk.length;
+
+                                                // 处理思考过程
+                                                let processedHTML = accumulatedText;
+                                                
+                                                // 检查是否有思考标签和引用标签
+                                                if (accumulatedText.includes('<sy_think>') && accumulatedText.includes('<search_references>')) {
+                                                    // 同时包含思考标签和引用标签
+                                                    processedHTML = processThinkingTags(accumulatedText);
+                                                    textContainer.innerHTML = processedHTML;
+                                                    
+                                                    // 确保思考内容区域展开
+                                                    const thinkingHeaders = textContainer.querySelectorAll('.thinking-header');
+                                                    const thinkingContents = textContainer.querySelectorAll('.thinking-content');
+                                                    
+                                                    thinkingHeaders.forEach(header => {
+                                                        header.classList.add('expanded');
+                                                    });
+                                                    
+                                                    thinkingContents.forEach(content => {
+                                                        content.style.display = 'block';
+                                                    });
+                                                } else if (accumulatedText.includes('<sy_think>')) {
+                                                    // 只有思考标签
+                                                    processedHTML = processThinkingTags(accumulatedText);
+                                                    textContainer.innerHTML = processedHTML;
+                                        
+                                                    // 确保思考内容区域展开
+                                                    const thinkingHeaders = textContainer.querySelectorAll('.thinking-header');
+                                                    const thinkingContents = textContainer.querySelectorAll('.thinking-content');
+                                        
+                                                    thinkingHeaders.forEach(header => {
+                                                        header.classList.add('expanded');
+                                                    });
+                                        
+                                                    thinkingContents.forEach(content => {
+                                                        content.style.display = 'block';
+                                                    });
+                                                } else if (accumulatedText.includes('<search_references>')) {
+                                                    // 只有引用标签
+                                                    processMessageWithReferences(accumulatedText, messageDiv);
+                                                } else {
+                                                    // 使用 marked 解析累积的文本
+                                                    textContainer.innerHTML = marked.parse(accumulatedText);
+                                                }
+                                                
+                                                // 处理代码块
+                                                textContainer.querySelectorAll('pre code').forEach(block => {
+                                                    hljs.highlightElement(block);
+                                                    
+                                                    // 检查是否已经有包装器
+                                                    const pre = block.parentElement;
+                                                    if (!pre.parentElement?.classList.contains('code-block-wrapper')) {
+                                                        const wrapper = document.createElement('div');
+                                                        wrapper.className = 'code-block-wrapper';
+                                                        
+                                                        // 解析语言和文件名
+                                                        const match = block.className.match(/language-([^:]+)(?::(.+))?/);
+                                                        if (match) {
+                                                            const language = match[1];
+                                                            const filename = match[2];
+                                                            wrapper.setAttribute('data-language', language);
+                                                            if (filename) {
+                                                                wrapper.setAttribute('data-filename', filename);
+                                                            }
+                                                        }
+                                                        
+                                                        pre.parentNode.insertBefore(wrapper, pre);
+                                                        wrapper.appendChild(pre);
+                                                    }
+                                                });
+                                            });
+
+                                            if (newRegenerateResponse.success) {
+                                                // 更新历史记录中对应order的消息
+                                                messageHistory[finalOrder] = {
+                                                    role: "assistant",
+                                                    content: newRegenerateResponse.content,
+                                                    timestamp: Date.now(),
+                                                    order: finalOrder
+                                                };
+
+                                                // 保存到数据库
+                                                await saveChatToDatabase();
+
+                                                // 在响应完成后为所有代码块添加复制按钮
+                                                messageDiv.querySelectorAll('.code-block-wrapper').forEach(wrapper => {
+                                                    if (!wrapper.querySelector('.copy-button')) {
+                                                        const copyButton = document.createElement('button');
+                                                        copyButton.className = 'copy-button';
+                                                        copyButton.textContent = 'Copy code';
+                                                        copyButton.onclick = () => copyCode(copyButton);
+                                                        wrapper.appendChild(copyButton);
+                                                    }
+                                                });
+
+                                                // 重新添加消息操作按钮（递归添加，复用相同的逻辑）
+                                                const recursiveActionButtons = document.createElement('div');
+                                                recursiveActionButtons.className = 'message-actions';
+                                                
+                                                // 复制按钮
+                                                const recursiveCopyButton = document.createElement('button');
+                                                recursiveCopyButton.className = 'action-button';
+                                                recursiveCopyButton.innerHTML = newCopyMessageButton.innerHTML;
+                                                recursiveCopyButton.title = '复制回答';
+                                                recursiveCopyButton.onclick = () => {
+                                                    navigator.clipboard.writeText(newRegenerateResponse.content).then(() => {
+                                                        recursiveCopyButton.classList.add('copied');
+                                                        setTimeout(() => recursiveCopyButton.classList.remove('copied'), 2000);
+                                                    });
+                                                };
+
+                                                // 重新添加重新回答按钮（使用递归逻辑，但简化处理）
+                                                const recursiveRegenerateButton = document.createElement('button');
+                                                recursiveRegenerateButton.className = 'action-button';
+                                                recursiveRegenerateButton.innerHTML = reRegenerateButton.innerHTML;
+                                                recursiveRegenerateButton.title = '重新回答';
+                                                // 递归调用：使用新内容创建新的onclick函数
+                                                const recursiveContent = newRegenerateResponse.content;
+                                                recursiveRegenerateButton.onclick = async () => {
+                                                    messageDiv.innerHTML = '';
+                                                    const recursiveOrder = messageHistory.findIndex(m => 
+                                                        m.role === 'assistant' && 
+                                                        m.content === recursiveContent
+                                                    );
+                                                    const finalRecursiveOrder = recursiveOrder !== -1 ? recursiveOrder : finalOrder;
+                                                    const previousRecursiveMessages = messageHistory.filter((m, index) => index < finalRecursiveOrder);
+                                                    const typingIndicator = document.createElement('div');
+                                                    typingIndicator.className = 'typing-indicator';
+                                                    typingIndicator.innerHTML = '<span></span><span></span><span></span>';
+                                                    messageDiv.appendChild(typingIndicator);
+                                                    
+                                                    try {
+                                                        const messages = buildMessages(previousRecursiveMessages);
+                                                        let textContainer = null;
+                                                        let accumulatedText = '';
+                                                        let currentIndex = 0;
+
+                                                        const response = await sendToAPI(messages, async (chunk) => {
+                                                            if (currentIndex === 0) {
+                                                                messageDiv.innerHTML = '';
+                                                                textContainer = document.createElement('div');
+                                                                messageDiv.appendChild(textContainer);
+                                                            }
+                                                            accumulatedText += chunk;
+                                                            currentIndex += chunk.length;
+                                                            let processedHTML = accumulatedText;
+                                                            if (accumulatedText.includes('<sy_think>') && accumulatedText.includes('<search_references>')) {
+                                                                processedHTML = processThinkingTags(accumulatedText);
+                                                                textContainer.innerHTML = processedHTML;
+                                                                const thinkingHeaders = textContainer.querySelectorAll('.thinking-header');
+                                                                const thinkingContents = textContainer.querySelectorAll('.thinking-content');
+                                                                thinkingHeaders.forEach(h => h.classList.add('expanded'));
+                                                                thinkingContents.forEach(c => c.style.display = 'block');
+                                                            } else if (accumulatedText.includes('<sy_think>')) {
+                                                                processedHTML = processThinkingTags(accumulatedText);
+                                                                textContainer.innerHTML = processedHTML;
+                                                                const thinkingHeaders = textContainer.querySelectorAll('.thinking-header');
+                                                                const thinkingContents = textContainer.querySelectorAll('.thinking-content');
+                                                                thinkingHeaders.forEach(h => h.classList.add('expanded'));
+                                                                thinkingContents.forEach(c => c.style.display = 'block');
+                                                            } else if (accumulatedText.includes('<search_references>')) {
+                                                                processMessageWithReferences(accumulatedText, messageDiv);
+                                                            } else {
+                                                                textContainer.innerHTML = marked.parse(accumulatedText);
+                                                            }
+                                                            textContainer.querySelectorAll('pre code').forEach(block => {
+                                                                hljs.highlightElement(block);
+                                                                const pre = block.parentElement;
+                                                                if (!pre.parentElement?.classList.contains('code-block-wrapper')) {
+                                                                    const wrapper = document.createElement('div');
+                                                                    wrapper.className = 'code-block-wrapper';
+                                                                    const match = block.className.match(/language-([^:]+)(?::(.+))?/);
+                                                                    if (match) {
+                                                                        wrapper.setAttribute('data-language', match[1]);
+                                                                        if (match[2]) wrapper.setAttribute('data-filename', match[2]);
+                                                                    }
+                                                                    pre.parentNode.insertBefore(wrapper, pre);
+                                                                    wrapper.appendChild(pre);
+                                                                }
+                                                            });
+                                                        });
+
+                                                        if (response.success) {
+                                                            messageHistory[finalRecursiveOrder] = {
+                                                                role: "assistant",
+                                                                content: response.content,
+                                                                timestamp: Date.now(),
+                                                                order: finalRecursiveOrder
+                                                            };
+                                                            await saveChatToDatabase();
+                                                            messageDiv.querySelectorAll('.code-block-wrapper').forEach(wrapper => {
+                                                                if (!wrapper.querySelector('.copy-button')) {
+                                                                    const copyButton = document.createElement('button');
+                                                                    copyButton.className = 'copy-button';
+                                                                    copyButton.textContent = 'Copy code';
+                                                                    copyButton.onclick = () => copyCode(copyButton);
+                                                                    wrapper.appendChild(copyButton);
+                                                                }
+                                                            });
+                                                            // 重新添加消息操作按钮（确保按钮始终存在）
+                                                            const newRecursiveActionButtons = document.createElement('div');
+                                                            newRecursiveActionButtons.className = 'message-actions';
+                                                            
+                                                            // 复制按钮
+                                                            const newRecursiveCopyButton = document.createElement('button');
+                                                            newRecursiveCopyButton.className = 'action-button';
+                                                            newRecursiveCopyButton.innerHTML = recursiveCopyButton.innerHTML;
+                                                            newRecursiveCopyButton.title = '复制回答';
+                                                            newRecursiveCopyButton.onclick = () => {
+                                                                navigator.clipboard.writeText(response.content).then(() => {
+                                                                    newRecursiveCopyButton.classList.add('copied');
+                                                                    setTimeout(() => newRecursiveCopyButton.classList.remove('copied'), 2000);
+                                                                });
+                                                            };
+                                                            
+                                                            // 重新回答按钮 - 使用新的响应内容创建新的onclick函数
+                                                            const newRecursiveRegenerateButton = document.createElement('button');
+                                                            newRecursiveRegenerateButton.className = 'action-button';
+                                                            newRecursiveRegenerateButton.innerHTML = recursiveRegenerateButton.innerHTML;
+                                                            newRecursiveRegenerateButton.title = '重新回答';
+                                                            // 递归：使用新内容创建新的onclick函数
+                                                            const newRecursiveContent = response.content;
+                                                            // 创建新的onclick函数，结构与recursiveRegenerateButton.onclick相同，但使用新内容
+                                                            newRecursiveRegenerateButton.onclick = async () => {
+                                                                messageDiv.innerHTML = '';
+                                                                const newRecursiveOrder = messageHistory.findIndex(m => 
+                                                                    m.role === 'assistant' && 
+                                                                    m.content === newRecursiveContent
+                                                                );
+                                                                const newFinalRecursiveOrder = newRecursiveOrder !== -1 ? newRecursiveOrder : finalRecursiveOrder;
+                                                                const newPreviousRecursiveMessages = messageHistory.filter((m, index) => index < newFinalRecursiveOrder);
+                                                                const typingIndicator = document.createElement('div');
+                                                                typingIndicator.className = 'typing-indicator';
+                                                                typingIndicator.innerHTML = '<span></span><span></span><span></span>';
+                                                                messageDiv.appendChild(typingIndicator);
+                                                                
+                                                                try {
+                                                                    const messages = buildMessages(newPreviousRecursiveMessages);
+                                                                    let textContainer = null;
+                                                                    let accumulatedText = '';
+                                                                    let currentIndex = 0;
+
+                                                                    const newResponse = await sendToAPI(messages, async (chunk) => {
+                                                                        if (currentIndex === 0) {
+                                                                            messageDiv.innerHTML = '';
+                                                                            textContainer = document.createElement('div');
+                                                                            messageDiv.appendChild(textContainer);
+                                                                        }
+                                                                        accumulatedText += chunk;
+                                                                        currentIndex += chunk.length;
+                                                                        let processedHTML = accumulatedText;
+                                                                        if (accumulatedText.includes('<sy_think>') && accumulatedText.includes('<search_references>')) {
+                                                                            processedHTML = processThinkingTags(accumulatedText);
+                                                                            textContainer.innerHTML = processedHTML;
+                                                                            const thinkingHeaders = textContainer.querySelectorAll('.thinking-header');
+                                                                            const thinkingContents = textContainer.querySelectorAll('.thinking-content');
+                                                                            thinkingHeaders.forEach(h => h.classList.add('expanded'));
+                                                                            thinkingContents.forEach(c => c.style.display = 'block');
+                                                                        } else if (accumulatedText.includes('<sy_think>')) {
+                                                                            processedHTML = processThinkingTags(accumulatedText);
+                                                                            textContainer.innerHTML = processedHTML;
+                                                                            const thinkingHeaders = textContainer.querySelectorAll('.thinking-header');
+                                                                            const thinkingContents = textContainer.querySelectorAll('.thinking-content');
+                                                                            thinkingHeaders.forEach(h => h.classList.add('expanded'));
+                                                                            thinkingContents.forEach(c => c.style.display = 'block');
+                                                                        } else if (accumulatedText.includes('<search_references>')) {
+                                                                            processMessageWithReferences(accumulatedText, messageDiv);
+                                                                        } else {
+                                                                            textContainer.innerHTML = marked.parse(accumulatedText);
+                                                                        }
+                                                                        textContainer.querySelectorAll('pre code').forEach(block => {
+                                                                            hljs.highlightElement(block);
+                                                                            const pre = block.parentElement;
+                                                                            if (!pre.parentElement?.classList.contains('code-block-wrapper')) {
+                                                                                const wrapper = document.createElement('div');
+                                                                                wrapper.className = 'code-block-wrapper';
+                                                                                const match = block.className.match(/language-([^:]+)(?::(.+))?/);
+                                                                                if (match) {
+                                                                                    wrapper.setAttribute('data-language', match[1]);
+                                                                                    if (match[2]) wrapper.setAttribute('data-filename', match[2]);
+                                                                                }
+                                                                                pre.parentNode.insertBefore(wrapper, pre);
+                                                                                wrapper.appendChild(pre);
+                                                                            }
+                                                                        });
+                                                                    });
+
+                                                                    if (newResponse.success) {
+                                                                        messageHistory[newFinalRecursiveOrder] = {
+                                                                            role: "assistant",
+                                                                            content: newResponse.content,
+                                                                            timestamp: Date.now(),
+                                                                            order: newFinalRecursiveOrder
+                                                                        };
+                                                                        await saveChatToDatabase();
+                                                                        messageDiv.querySelectorAll('.code-block-wrapper').forEach(wrapper => {
+                                                                            if (!wrapper.querySelector('.copy-button')) {
+                                                                                const copyButton = document.createElement('button');
+                                                                                copyButton.className = 'copy-button';
+                                                                                copyButton.textContent = 'Copy code';
+                                                                                copyButton.onclick = () => copyCode(copyButton);
+                                                                                wrapper.appendChild(copyButton);
+                                                                            }
+                                                                        });
+                                                                        
+                                                                        // 继续递归添加按钮
+                                                                        const continueActionButtons = document.createElement('div');
+                                                                        continueActionButtons.className = 'message-actions';
+                                                                        
+                                                                        const continueCopyButton = document.createElement('button');
+                                                                        continueCopyButton.className = 'action-button';
+                                                                        continueCopyButton.innerHTML = newRecursiveCopyButton.innerHTML;
+                                                                        continueCopyButton.title = '复制回答';
+                                                                        continueCopyButton.onclick = () => {
+                                                                            navigator.clipboard.writeText(newResponse.content).then(() => {
+                                                                                continueCopyButton.classList.add('copied');
+                                                                                setTimeout(() => continueCopyButton.classList.remove('copied'), 2000);
+                                                                            });
+                                                                        };
+                                                                        
+                                                                        const continueRegenerateButton = document.createElement('button');
+                                                                        continueRegenerateButton.className = 'action-button';
+                                                                        continueRegenerateButton.innerHTML = newRecursiveRegenerateButton.innerHTML;
+                                                                        continueRegenerateButton.title = '重新回答';
+                                                                        // 递归调用：创建新的onclick函数使用新内容
+                                                                        const continueContent = newResponse.content;
+                                                                        continueRegenerateButton.onclick = newRecursiveRegenerateButton.onclick; // 复用相同的逻辑结构
+                                                                        
+                                                                        continueActionButtons.appendChild(continueCopyButton);
+                                                                        continueActionButtons.appendChild(continueRegenerateButton);
+                                                                        messageDiv.appendChild(continueActionButtons);
+                                                                    }
+                                                                } catch (error) {
+                                                                    console.error('Regenerate Error:', error);
+                                                                    messageDiv.innerHTML = '重新生成回答时发生错误，请稍后重试';
+                                                                }
+                                                            };
+                                                            
+                                                            newRecursiveActionButtons.appendChild(newRecursiveCopyButton);
+                                                            newRecursiveActionButtons.appendChild(newRecursiveRegenerateButton);
+                                                            messageDiv.appendChild(newRecursiveActionButtons);
+                                                        }
+                                                    } catch (error) {
+                                                        console.error('Regenerate Error:', error);
+                                                        messageDiv.innerHTML = '重新生成回答时发生错误，请稍后重试';
+                                                    }
+                                                };
+
+                                                recursiveActionButtons.appendChild(recursiveCopyButton);
+                                                recursiveActionButtons.appendChild(recursiveRegenerateButton);
+                                                messageDiv.appendChild(recursiveActionButtons);
+                                            }
+                                        } catch (error) {
+                                            console.error('Regenerate Error:', error);
+                                            messageDiv.innerHTML = '重新生成回答时发生错误，请稍后重试';
+                                        }
+                                    };
+
+                                    newActionButtons.appendChild(newCopyMessageButton);
+                                    newActionButtons.appendChild(reRegenerateButton);
+                                    messageDiv.appendChild(newActionButtons);
+                                }
+                            } catch (error) {
+                                console.error('Regenerate Error:', error);
+                                messageDiv.innerHTML = '重新生成回答时发生错误，请稍后重试';
+                            }
+                        };
+
+                        actionButtons.appendChild(copyMessageButton);
+                        actionButtons.appendChild(newRegenerateButton);
+                        messageDiv.appendChild(actionButtons);
+                    }
+                    
+                    // 不再继续执行后面的代码
+                    return;
+                } catch (error) {
+                    console.error('Send Message Error:', error);
+                    if (messageDiv) {
+                        messageDiv.innerHTML = '发生了外部错误，请稍后重试（伤心地垂下耳朵）';
+                    }
+                    // 停止执行
+                    return;
+                }
+            } catch (error) {
+                console.error('搜索失败:', error);
+                searchButton.classList.remove('searching');
+                
+                // 添加错误消息到聊天
+                const errorMessage = '搜索失败，请稍后重试';
+                addMessage(errorMessage, 'assistant', 'main-chat-messages');
                 messageHistory.push({
                     role: "assistant",
                     content: errorMessage,
-                    timestamp: Date.now()
+                    timestamp: Date.now(),
+                    order: messageHistory.length
                 });
+                return;
+            }
+        }
+
+            // 创建新的消息容器
+            const chatMessages = document.getElementById('main-chat-messages');
+            
+            // 添加打字机动画
+            addTypingIndicator();
+
+            try {
+                // 使用 API 模块发送消息并处理流式响应
+                const messages = buildMessages(messageHistory);
+                            let textContainer = null;
+                            let accumulatedText = '';
+                let currentIndex = 0;
+
+                const response = await sendToAPI(messages, async (chunk) => {
+                    // 在第一次收到响应时创建消息容器
+                    if (currentIndex === 0) {
+                        removeTypingIndicator();
+                        messageDiv = document.createElement('div');
+                        messageDiv.className = 'message assistant-message';
+                        chatMessages.appendChild(messageDiv);
+                        
+                        textContainer = document.createElement('div');
+                        messageDiv.appendChild(textContainer);
+                    }
+                    
+                    accumulatedText += chunk;
+                    currentIndex += chunk.length;
+                    
+                    // 处理思考过程
+                    let processedHTML = accumulatedText;
+                    
+                    // 检查是否有思考标签和引用标签
+                    if (accumulatedText.includes('<sy_think>') && accumulatedText.includes('<search_references>')) {
+                        // 同时包含思考标签和引用标签
+                        processedHTML = processThinkingTags(accumulatedText);
+                        textContainer.innerHTML = processedHTML;
+                        
+                        // 确保思考内容区域展开
+                        const thinkingHeaders = textContainer.querySelectorAll('.thinking-header');
+                        const thinkingContents = textContainer.querySelectorAll('.thinking-content');
+                        
+                        thinkingHeaders.forEach(header => {
+                            header.classList.add('expanded');
+                        });
+                        
+                        thinkingContents.forEach(content => {
+                            content.style.display = 'block';
+                        });
+                    } else if (accumulatedText.includes('<sy_think>')) {
+                        // 只有思考标签
+                        processedHTML = processThinkingTags(accumulatedText);
+                        textContainer.innerHTML = processedHTML;
                 
-                // 保存错误消息到数据库
+                        // 确保思考内容区域展开
+                        const thinkingHeaders = textContainer.querySelectorAll('.thinking-header');
+                        const thinkingContents = textContainer.querySelectorAll('.thinking-content');
+                
+                        thinkingHeaders.forEach(header => {
+                            header.classList.add('expanded');
+                        });
+                
+                        thinkingContents.forEach(content => {
+                            content.style.display = 'block';
+                        });
+                    } else if (accumulatedText.includes('<search_references>')) {
+                        // 只有引用标签
+                        processMessageWithReferences(accumulatedText, messageDiv);
+                    } else {
+                        // 使用 marked 解析累积的文本
+                        textContainer.innerHTML = marked.parse(accumulatedText);
+                    }
+                    
+                    // 处理代码块
+                    textContainer.querySelectorAll('pre code').forEach(block => {
+                        hljs.highlightElement(block);
+                        
+                        // 检查是否已经有包装器
+                        const pre = block.parentElement;
+                        if (!pre.parentElement?.classList.contains('code-block-wrapper')) {
+                            const wrapper = document.createElement('div');
+                            wrapper.className = 'code-block-wrapper';
+                            
+                            // 解析语言和文件名
+                            const match = block.className.match(/language-([^:]+)(?::(.+))?/);
+                            if (match) {
+                                const language = match[1];
+                                const filename = match[2];
+                                // 直接使用完整的语言名称，不进行简化
+                                wrapper.setAttribute('data-language', language);
+                                if (filename) {
+                                    wrapper.setAttribute('data-filename', filename);
+                                }
+                            }
+                            
+                            pre.parentNode.insertBefore(wrapper, pre);
+                            wrapper.appendChild(pre);
+                        }
+                    });
+                });
+
+                if (response.success) {
+                    // 添加AI回复到历史记录
+                    const newMessage = {
+                        role: "assistant",
+                        content: response.content,
+                        timestamp: Date.now(),
+                    order: messageHistory.length
+                    };
+                    messageHistory.push(newMessage);
+
+                    // 保存到数据库
                 try {
                     const formData = new FormData();
                     formData.append('action', 'saveChatHistory');
-                    const messagesWithOrder = messageHistory.map((msg, index) => ({
-                        ...msg,
-                        order: index
-                    }));
-                    formData.append('messages', JSON.stringify(messagesWithOrder));
+                    
+                    const firstUserMessage = messageHistory.find(msg => msg.role === 'user');
+                    let chatTitle = firstUserMessage ? firstUserMessage.content : '新对话';
+                    
+                    formData.append('title', chatTitle);
+                    formData.append('messages', JSON.stringify(messageHistory));
+                    
                     if (currentChatId) {
                         formData.append('chatId', currentChatId);
                     }
-                    await fetch('api.php', { method: 'POST', body: formData });
-                    await loadUserChatHistory();
-                } catch (error) {
-                    console.error('保存聊天历史失败:', error);
-                }
-            }
-        } else {
-            // 非绘画模式才显示三点加载画
-            addTypingIndicator();
-
-            // 使用 API 模块发送消息
-            const messages = buildMessages(messageHistory);
-            const response = await sendToAPI(messages);
-
-            removeTypingIndicator();
-
-            if (response.success) {
-                // 添加AI回复到历史记录
-                messageHistory.push({
-                    role: "assistant",
-                    content: response.content,
-                    timestamp: Date.now()
-                });
-
-                // 如果历史记录长，删除旧的对话
-                while (messageHistory.length > API_CONFIG.MAX_HISTORY * 2) {
-                    messageHistory.shift();
-                }
-
-                addMessage(response.content, 'ai', 'main-chat-messages');
-
-                // 保存到数据库
-                try {
-                    const formData = new FormData();
-                    formData.append('action', 'saveChatHistory');
                     
-                    // 使用第一条用户消息作为标题
-                    const firstUserMessage = messageHistory.find(msg => msg.role === 'user');
-                    let chatTitle = '新对话';
-                    if (firstUserMessage) {
-                        chatTitle = firstUserMessage.content;
+                        const saveResponse = await fetch('api.php', {
+                            method: 'POST',
+                            body: formData
+                        });
+                    
+                    if (!saveResponse.ok) {
+                        const errorText = await saveResponse.text();
+                        console.error('保存失败:', errorText);
+                        throw new Error(`保存失败: ${saveResponse.status} ${saveResponse.statusText}`);
                     }
-                    
-                    // 添加消息序号，确保顺序
-                    const messagesWithOrder = messageHistory.map((msg, index) => ({
-                        ...msg,
-                        order: index
-                    }));
-                    
-                    formData.append('title', chatTitle);
-                    formData.append('messages', JSON.stringify(messagesWithOrder));
-                    
-                    if (currentChatId && messageHistory.length > 2) {
-                        formData.append('chatId', currentChatId);
-                    }
-                    
-                    const saveResponse = await fetch('api.php', {
-                        method: 'POST',
-                        body: formData
-                    });
-                    
-                    const saveData = await saveResponse.json();
-                    
-                    if (saveData.success) {
-                        if (!currentChatId || messageHistory.length <= 2) {
-                            currentChatId = saveData.chatId;
+                        
+                        const saveData = await saveResponse.json();
+                        
+                        if (saveData.success) {
+                            if (!currentChatId) {
+                                currentChatId = saveData.chatId;
+                            }
+                            await loadUserChatHistory();
+                    } else {
+                        throw new Error(saveData.error || '保存失败');
                         }
-                        await loadUserChatHistory();
+                    } catch (error) {
+                        console.error('保存聊天历史失败:', error);
+                    // 添加错误消息到聊天
+                    const errorMessage = '保存聊天记录失败，但消息已发送';
+                    addMessage(errorMessage, 'assistant', 'main-chat-messages');
                     }
-                } catch (error) {
-                    console.error('保存聊天历史失败:', error);
+
+                    // 在响应完成后为所有代码块添加复制按钮
+                    messageDiv.querySelectorAll('.code-block-wrapper').forEach(wrapper => {
+                        if (!wrapper.querySelector('.copy-button')) {
+                            const copyButton = document.createElement('button');
+                            copyButton.className = 'copy-button';
+                            copyButton.textContent = 'Copy code';
+                            copyButton.onclick = () => copyCode(copyButton);
+                            wrapper.appendChild(copyButton);
+                        }
+                    });
+
+                    // 重新添加消息操作按钮
+                    const actionButtons = document.createElement('div');
+                    actionButtons.className = 'message-actions';
+                    
+                    // 复制按钮
+                    const copyMessageButton = document.createElement('button');
+                    copyMessageButton.className = 'action-button';
+                    copyMessageButton.innerHTML = `
+                        <span class="copy-icon">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                            </svg>
+                        </span>
+                        <span class="check-icon">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="20 6 9 17 4 12"></polyline>
+                            </svg>
+                        </span>
+                    `;
+                    copyMessageButton.title = '复制回答';
+                    copyMessageButton.onclick = () => {
+                        navigator.clipboard.writeText(response.content).then(() => {
+                            copyMessageButton.classList.add('copied');
+                            setTimeout(() => copyMessageButton.classList.remove('copied'), 2000);
+                        });
+                    };
+
+                    // 重新回答按钮
+                    const newRegenerateButton = document.createElement('button');
+                    newRegenerateButton.className = 'action-button';
+                    newRegenerateButton.innerHTML = `
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.3"/>
+                        </svg>
+                    `;
+                    newRegenerateButton.title = '重新回答';
+                    newRegenerateButton.onclick = async () => {
+                        // 移除当前回答的内容，但保留消息容器
+                        messageDiv.innerHTML = '';
+                        
+                        // 获取当前消息的order
+                        const currentMessageOrder = messageHistory.findIndex(m => 
+                            m.role === 'assistant' && 
+                            m.content === response.content
+                        );
+
+                        // 创建一个新的消息历史，只包含当前消息之前的对话
+                        const previousMessages = messageHistory.filter((m, index) => index < currentMessageOrder);
+                        
+                        // 添加打字机动画
+                        const typingIndicator = document.createElement('div');
+                        typingIndicator.className = 'typing-indicator';
+                        typingIndicator.innerHTML = '<span></span><span></span><span></span>';
+                        messageDiv.appendChild(typingIndicator);
+
+                        try {
+                            // 使用截至当前消息之前的历史记录重新请求回答
+                            const messages = buildMessages(previousMessages);
+                            let textContainer = null;
+                            let accumulatedText = '';
+                            let currentIndex = 0;
+                            
+                            const regenerateResponse = await sendToAPI(messages, async (chunk) => {
+                                // 在第一次收到响应时创建文本容器
+                                if (currentIndex === 0) {
+                                    messageDiv.innerHTML = ''; // 清除打字机动画
+                                    textContainer = document.createElement('div');
+                                    messageDiv.appendChild(textContainer);
+                                }
+                                
+                                accumulatedText += chunk;
+                                currentIndex += chunk.length;
+                                
+                                // 处理思考过程
+                                let processedHTML = accumulatedText;
+                                
+                                // 检查是否有思考标签和引用标签
+                                if (accumulatedText.includes('<sy_think>') && accumulatedText.includes('<search_references>')) {
+                                    // 同时包含思考标签和引用标签
+                                    processedHTML = processThinkingTags(accumulatedText);
+                                    textContainer.innerHTML = processedHTML;
+                                    
+                                    // 确保思考内容区域展开
+                                    const thinkingHeaders = textContainer.querySelectorAll('.thinking-header');
+                                    const thinkingContents = textContainer.querySelectorAll('.thinking-content');
+                                    
+                                    thinkingHeaders.forEach(header => {
+                                        header.classList.add('expanded');
+                                    });
+                                    
+                                    thinkingContents.forEach(content => {
+                                        content.style.display = 'block';
+                                    });
+                                } else if (accumulatedText.includes('<sy_think>')) {
+                                    // 只有思考标签
+                                    processedHTML = processThinkingTags(accumulatedText);
+                                    textContainer.innerHTML = processedHTML;
+                
+                                    // 确保思考内容区域展开
+                                    const thinkingHeaders = textContainer.querySelectorAll('.thinking-header');
+                                    const thinkingContents = textContainer.querySelectorAll('.thinking-content');
+                
+                                    thinkingHeaders.forEach(header => {
+                                        header.classList.add('expanded');
+                                    });
+                
+                                    thinkingContents.forEach(content => {
+                                        content.style.display = 'block';
+                                    });
+                                } else if (accumulatedText.includes('<search_references>')) {
+                                    // 只有引用标签
+                                    processMessageWithReferences(accumulatedText, messageDiv);
+                                } else {
+                                    // 使用 marked 解析累积的文本
+                                    textContainer.innerHTML = marked.parse(accumulatedText);
+                                }
+                                
+                                // 处理代码块
+                                textContainer.querySelectorAll('pre code').forEach(block => {
+                                    hljs.highlightElement(block);
+                                    
+                                    // 检查是否已经有包装器
+                                    const pre = block.parentElement;
+                                    if (!pre.parentElement?.classList.contains('code-block-wrapper')) {
+                                        const wrapper = document.createElement('div');
+                                        wrapper.className = 'code-block-wrapper';
+                                        
+                                        // 解析语言和文件名
+                                        const match = block.className.match(/language-([^:]+)(?::(.+))?/);
+                                        if (match) {
+                                            const language = match[1];
+                                            const filename = match[2];
+                                            wrapper.setAttribute('data-language', language);
+                                            if (filename) {
+                                                wrapper.setAttribute('data-filename', filename);
+                                            }
+                                        }
+                                        
+                                        pre.parentNode.insertBefore(wrapper, pre);
+                                        wrapper.appendChild(pre);
+                                    }
+                                });
+                            });
+
+                            if (regenerateResponse.success) {
+                                // 更新历史记录中对应order的消息
+                                messageHistory[currentMessageOrder] = {
+                                    role: "assistant",
+                                    content: regenerateResponse.content,
+                                    timestamp: Date.now(),
+                                    order: currentMessageOrder
+                                };
+
+                                // 更新response变量，确保下次重新回答能找到正确的消息
+                                response.content = regenerateResponse.content;
+
+                                // 保存到数据库
+                                await saveChatToDatabase();
+
+                                // 在响应完成后为所有代码块添加复制按钮
+                                messageDiv.querySelectorAll('.code-block-wrapper').forEach(wrapper => {
+                                    if (!wrapper.querySelector('.copy-button')) {
+                                        const copyButton = document.createElement('button');
+                                        copyButton.className = 'copy-button';
+                                        copyButton.textContent = 'Copy code';
+                                        copyButton.onclick = () => copyCode(copyButton);
+                                        wrapper.appendChild(copyButton);
+                                    }
+                                });
+
+                                // 重新添加消息操作按钮
+                                const newActionButtons = document.createElement('div');
+                                newActionButtons.className = 'message-actions';
+                                
+                                // 复制按钮
+                                const newCopyMessageButton = document.createElement('button');
+                                newCopyMessageButton.className = 'action-button';
+                                newCopyMessageButton.innerHTML = copyMessageButton.innerHTML;
+                                newCopyMessageButton.title = '复制回答';
+                                newCopyMessageButton.onclick = () => {
+                                    navigator.clipboard.writeText(regenerateResponse.content).then(() => {
+                                        newCopyMessageButton.classList.add('copied');
+                                        setTimeout(() => newCopyMessageButton.classList.remove('copied'), 2000);
+                                    });
+                                };
+
+                                // 重新添加重新回答按钮
+                                const reRegenerateButton = document.createElement('button');
+                                reRegenerateButton.className = 'action-button';
+                                reRegenerateButton.innerHTML = newRegenerateButton.innerHTML;
+                                reRegenerateButton.title = '重新回答';
+                                reRegenerateButton.onclick = newRegenerateButton.onclick;
+
+                                newActionButtons.appendChild(newCopyMessageButton);
+                                newActionButtons.appendChild(reRegenerateButton);
+                                messageDiv.appendChild(newActionButtons);
+                            }
+                        } catch (error) {
+                            console.error('Regenerate Error:', error);
+                            messageDiv.innerHTML = '重新生成回答时发生错误，请稍后重试';
+                        }
+                    };
+
+                    actionButtons.appendChild(copyMessageButton);
+                    actionButtons.appendChild(newRegenerateButton);
+                    messageDiv.appendChild(actionButtons);
                 }
-            } else {
-                console.error('API Response Error:', response);
-                const errorMessage = response.error || '唔...出错了呢~ 请稍后再试w（耳朵耷拉下来）';
-                addMessage(errorMessage, 'ai', 'main-chat-messages');
+            } catch (error) {
+                console.error('Send Message Error:', error);
+                if (messageDiv) {
+                    messageDiv.innerHTML = '发生了外部错误，请稍后重试（伤心地垂下耳朵）';
             }
         }
     } catch (error) {
         console.error('Send Message Error:', error);
-        if (getCurrentModel() !== 'draw') {
-            removeTypingIndicator();
+        if (messageDiv) {
+            messageDiv.innerHTML = '发生了外部错误，请稍后重试（伤心地垂下耳朵）';
         }
-        addMessage('发生了外部错误，请稍后重试（伤心地垂下耳朵）', 'ai', 'main-chat-messages');
     } finally {
-        // 重新启用和发送按钮
+        // 重新启用输入和发送按钮
         userInput.disabled = false;
         sendButton.disabled = false;
         userInput.focus();
+    }
+}
+
+// 保存聊天到数据库的辅助函数
+async function saveChatToDatabase() {
+    try {
+        const formData = new FormData();
+        formData.append('action', 'saveChatHistory');
+        
+        const firstUserMessage = messageHistory.find(msg => msg.role === 'user');
+        let chatTitle = firstUserMessage ? firstUserMessage.content : '新对话';
+        
+        const messagesWithOrder = messageHistory.map((msg, index) => ({
+            ...msg,
+            order: index
+        }));
+        
+        formData.append('title', chatTitle);
+        formData.append('messages', JSON.stringify(messagesWithOrder));
+        
+        if (currentChatId) {
+            formData.append('chatId', currentChatId);
+        }
+        
+        const saveResponse = await fetch('api.php', {
+            method: 'POST',
+            body: formData
+        });
+        
+        const saveData = await saveResponse.json();
+        
+        if (saveData.success) {
+            if (!currentChatId) {
+                currentChatId = saveData.chatId;
+            }
+            // 只更新侧边栏的聊天历史列表，不重新加载消息
+            await loadUserChatHistory();
+        }
+    } catch (error) {
+        console.error('保存聊天历史失败:', error);
     }
 }
 
@@ -1396,102 +3214,252 @@ deleteButton.addEventListener('click', async (e) => {
     });
 });
 
-// 在聊天记录项中创建删除按钮
-function createChatHistoryItem(chat) {
-    const chatItem = document.createElement('div');
-    chatItem.className = 'chat-history-item';
-    chatItem.setAttribute('data-chat-id', chat.id);
-
-    // 创建删除按钮
-    const deleteButton = document.createElement('button');
-    deleteButton.className = 'delete-chat-button';
-    deleteButton.innerHTML = '×';
-    deleteButton.title = '删除对话';
-
-    // 添加删除按钮的点击事件
-    deleteButton.addEventListener('click', (e) => {
-        e.stopPropagation(); // 阻止事件冒泡
-        showDeleteConfirmation(chat.id);
-    });
-
-    // 创建标题元素
-    const titleElement = document.createElement('span');
-    titleElement.className = 'chat-title';
-    titleElement.textContent = chat.title || '新对话';
-
-    // 将元素添加到聊天项中
-    chatItem.appendChild(titleElement);
-    chatItem.appendChild(deleteButton);
-
-    // 添加点击事件以加载聊天记录
-    chatItem.addEventListener('click', () => {
-        loadChat(chat.id);
-    });
-
-    return chatItem;
-}
-
-// 显示删除确认对话框
-function showDeleteConfirmation(chatId) {
-    const modal = document.getElementById('deleteConfirmModal');
-    const confirmButton = modal.querySelector('.confirm');
-    const cancelButton = modal.querySelector('.cancel');
-
-    // 显示模态框
-    modal.style.display = 'flex';
-    modal.classList.add('active');
-
-    // 确认删除
-    const handleConfirm = async () => {
+// 处理思考标签的函数
+function processThinkingTags(content) {
+    // 检查是否包含思考标签
+    if (!content.includes('<sy_think>')) {
+        return marked.parse(content);
+    }
+    
+    // 检查是否同时包含搜索引用
+    if (content.includes('<search_references>')) {
+        // 分离引用数据和主要内容
+        const referencesParts = content.split('<search_references>');
+        const mainContentWithThinking = referencesParts[0];
+        let references = [];
+        
         try {
-            await deleteChat(chatId);
-            // 从 UI 中移除聊天项
-            const chatItem = document.querySelector(`.chat-history-item[data-chat-id="${chatId}"]`);
-            if (chatItem) {
-                chatItem.remove();
-            }
+            // 尝试解析引用数据
+            const referencesJson = referencesParts[1].split('</search_references>')[0];
+            references = JSON.parse(referencesJson);
+            
+            // 处理带思考标签的主要内容
+            const processedMainContent = processThinkingContent(mainContentWithThinking);
+            
+            // 创建完整的HTML
+            let html = processedMainContent;
+            
+            // 添加引用部分的HTML
+            const referencesHTML = `
+                <div class="reference-container">
+                    <h5>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"/>
+                            <path d="M2 12h20"/>
+                            <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+                        </svg>
+                        引用内容:
+                    </h5>
+                    <ul>
+                        ${references.map(ref => `
+                            <li>
+                                <a href="${ref.url}" target="_blank" rel="noopener noreferrer">${ref.title}</a>
+                            </li>
+                        `).join('')}
+                    </ul>
+                </div>
+            `;
+            
+            html += referencesHTML;
+            return html;
         } catch (error) {
-            console.error('删除聊天失败:', error);
-        } finally {
-            closeModal();
+            console.error('解析引用数据失败:', error);
+            // 如果解析引用失败，仍处理思考标签部分
+            return processThinkingContent(content);
         }
-    };
-
-    // 取消删除
-    const handleCancel = () => {
-        closeModal();
-    };
-
-    // 关闭模态框
-    const closeModal = () => {
-        modal.classList.remove('active');
-        setTimeout(() => {
-            modal.style.display = 'none';
-        }, 300);
-        // 移除事件监听器
-        confirmButton.removeEventListener('click', handleConfirm);
-        cancelButton.removeEventListener('click', handleCancel);
-    };
-
-    // 添加事件监听器
-    confirmButton.addEventListener('click', handleConfirm);
-    cancelButton.addEventListener('click', handleCancel);
+    } else {
+        // 只有思考标签，没有引用标签
+        return processThinkingContent(content);
+    }
+    
+    // 内部辅助函数：处理只包含思考标签的内容
+    function processThinkingContent(content) {
+        // HTML转义函数，将thinking内容转换为纯文本
+        function escapeHtml(text) {
+            const map = {
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#039;'
+            };
+            return text.replace(/[&<>"']/g, function(m) { return map[m]; });
+        }
+        
+        // 将思考内容收集到一起
+        let mainContent = '';
+        let thinkingContent = '';
+        
+        // 分割内容为各个部分
+        const parts = content.split(/<sy_think>|<\/sy_think>/);
+        for (let i = 0; i < parts.length; i++) {
+            if (i % 2 === 0) {
+                // 非思考部分
+                mainContent += parts[i];
+            } else {
+                // 思考部分
+                thinkingContent += parts[i];
+            }
+        }
+        
+        // 处理空白字符：移除中文字符之间的空格，使字符间距一致
+        // 先移除所有换行符和制表符，替换为空格
+        thinkingContent = thinkingContent.replace(/[\n\r\t]/g, ' ');
+        // 移除中文字符之间的所有空白字符（中文字符Unicode范围：\u4e00-\u9fff，包括中文标点）
+        // 匹配中文字符之间的任意空白字符（包括空格、多个空格等）
+        thinkingContent = thinkingContent.replace(/([\u4e00-\u9fff\u3000-\u303f\uff00-\uffef])\s+([\u4e00-\u9fff\u3000-\u303f\uff00-\uffef])/g, '$1$2');
+        // 将多个连续空格替换为单个空格（用于中英文之间的必要空格）
+        thinkingContent = thinkingContent.replace(/\s+/g, ' ');
+        // 最后去除首尾空格
+        thinkingContent = thinkingContent.trim();
+        
+        // 计算思考时长（假设每10个字符约1秒）
+        const thinkingTimeInSeconds = Math.max(Math.round(thinkingContent.length / 10), 1);
+        const thinkingTimeText = thinkingTimeInSeconds > 60 
+            ? `${Math.floor(thinkingTimeInSeconds / 60)}分${thinkingTimeInSeconds % 60}秒`
+            : `${thinkingTimeInSeconds}秒`;
+        
+        // 将各部分转换为HTML
+        let html = '';
+        
+        // 创建折叠式深度思考区域
+        const thinkingId = 'thinking-' + Date.now();
+        
+        // 先添加思考标题和内容，默认显示内容（不再隐藏）
+        html += `
+            <div class="thinking-summary">
+                <div class="thinking-header expanded" data-target="${thinkingId}" onclick="toggleThinking('${thinkingId}')">
+                    <svg class="thinking-icon" viewBox="0 0 24 24" width="16" height="16">
+                        <path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z"></path>
+                    </svg>
+                    已进行深度思考 (耗时${thinkingTimeText})
+                    <svg class="thinking-arrow" viewBox="0 0 24 24" width="16" height="16">
+                        <path fill="currentColor" d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"></path>
+                    </svg>
+                </div>
+                <div id="${thinkingId}" class="thinking-content" style="display: block; max-height: none; overflow: visible;">
+                    <div style="white-space: normal; word-wrap: break-word; word-break: break-word; margin: 0; padding: 0; background: transparent; border: none; font-family: inherit; font-size: inherit; line-height: inherit; overflow-wrap: break-word;">${escapeHtml(thinkingContent)}</div>
+                </div>
+            </div>
+        `;
+        
+        // 然后添加主要内容
+        if (mainContent.trim()) {
+            html += marked.parse(mainContent);
+        }
+        
+        // 确保toggleThinking函数存在
+        if (!window.toggleThinking) {
+            window.toggleThinking = function(id) {
+                const content = document.getElementById(id);
+                if (!content) return;
+                
+                const header = document.querySelector(`.thinking-header[data-target="${id}"]`);
+                
+                if (content.style.display === 'none') {
+                    content.style.display = 'block';
+                    if (header) header.classList.add('expanded');
+                } else {
+                    content.style.display = 'none';
+                    if (header) header.classList.remove('expanded');
+                }
+            };
+        }
+        
+        return html;
+    }
 }
 
-// 删除聊天的 API 调用函数
-async function deleteChat(chatId) {
+// 添加 Tavily 搜索函数
+async function searchWithTavily(query) {
     try {
-        const response = await fetch(`/api/delete_chat.php?chat_id=${chatId}`, {
-            method: 'DELETE',
+        const response = await fetch('https://api.tavily.com/search', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${TAVILY_API_KEY}`
+            },
+            body: JSON.stringify({
+                query: query,
+                search_depth: "basic",
+                max_results: 5
+            })
         });
-        
+
         if (!response.ok) {
-            throw new Error('删除聊天失败');
+            const errorText = await response.text();
+            console.error('搜索请求失败:', errorText);
+            throw new Error(`搜索请求失败: ${response.status} ${response.statusText}`);
         }
-        
-        return await response.json();
+
+        const data = await response.json();
+        if (!data.results) {
+            throw new Error('搜索结果格式错误');
+        }
+        return data.results;
     } catch (error) {
-        console.error('删除聊天出错:', error);
+        console.error('搜索出错:', error);
         throw error;
+    }
+}
+
+// 修改处理引用内容的函数
+function processMessageWithReferences(content, messageDiv) {
+    // 检查消息是否包含搜索引用
+    if (content.includes('<search_references>')) {
+        // 提取引用数据和主要内容
+        const parts = content.split('<search_references>');
+        const mainContent = parts[0];
+        let references = [];
+        
+        try {
+            // 尝试解析引用数据
+            const referencesJson = parts[1].split('</search_references>')[0];
+            references = JSON.parse(referencesJson);
+            
+            // 首先渲染主要内容
+            messageDiv.innerHTML = marked.parse(mainContent);
+            
+            // 然后添加引用容器
+            const referenceContainer = document.createElement('div');
+            referenceContainer.className = 'reference-container';
+            
+            const referencesHTML = `
+                <h5>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"/>
+                        <path d="M2 12h20"/>
+                        <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+                    </svg>
+                    引用内容:
+                </h5>
+                <ul>
+                    ${references.map(ref => `
+                        <li>
+                            <a href="${ref.url}" target="_blank" rel="noopener noreferrer">${ref.title}</a>
+                        </li>
+                    `).join('')}
+                </ul>
+            `;
+            
+            referenceContainer.innerHTML = referencesHTML;
+            messageDiv.appendChild(referenceContainer);
+            
+            // 高亮代码块
+            messageDiv.querySelectorAll('pre code').forEach(block => {
+                hljs.highlightElement(block);
+            });
+            
+            return true;
+        } catch (error) {
+            console.error('解析引用数据失败:', error);
+            // 如果解析失败，回退到普通渲染
+            messageDiv.innerHTML = marked.parse(content);
+            return false;
+        }
+    } else {
+        // 普通消息，直接解析
+        messageDiv.innerHTML = marked.parse(content);
+        return false;
     }
 }

@@ -20,7 +20,7 @@ function getBrowserType() {
     }
     return 'other';
 }
-
+ 
 // 在 DOMContentLoaded 时添加特殊类
 document.addEventListener('DOMContentLoaded', function() {
     const browserType = getBrowserType();

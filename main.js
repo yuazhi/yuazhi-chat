@@ -6,6 +6,7 @@ let sidebarOverlay;
 let currentChatId = null; // 添加当前聊天ID的跟踪
 const TAVILY_API_KEY = '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';
 let isSearchMode = false;
+let isSending = false; // 添加发送状态标志，防止重复调用API
 
 // 检测浏览器类型
 function getBrowserType() {
@@ -149,6 +150,31 @@ function typeCode(code, element, callback) {
     typeChar();
 }
 
+// 检查是否是数学公式元素，避免被误识别为代码块
+function isMathFormula(element) {
+    // 检查元素或父元素是否包含 katex 类
+    if (element.classList.contains('katex') || 
+        element.classList.contains('katex-display') ||
+        element.parentElement?.classList.contains('katex') ||
+        element.parentElement?.classList.contains('katex-display') ||
+        element.closest('.katex') ||
+        element.closest('.katex-display')) {
+        return true;
+    }
+    
+    // 检查父元素链中是否有 katex 相关元素
+    let parent = element.parentElement;
+    while (parent) {
+        if (parent.classList.contains('katex') || 
+            parent.classList.contains('katex-display')) {
+            return true;
+        }
+        parent = parent.parentElement;
+    }
+    
+    return false;
+}
+
 // 处理代码块的函数
 function processCodeBlock(codeContent, messageDiv, useTypingEffect, callback) {
     const codeWrapper = document.createElement('div');
@@ -204,6 +230,150 @@ function processCodeBlock(codeContent, messageDiv, useTypingEffect, callback) {
     }
 }
 
+// 处理数学公式的函数，将 [ ... ] 和 ( ... ) 格式转换为 KaTeX 可渲染格式
+function processMathFormulas(text) {
+    // 先将已经是 \[ ... \] 格式的公式保护起来，避免被重复处理
+    const protectedFormulas = [];
+    let protectedIndex = 0;
+    
+    // 保护已经存在的 \[ ... \] 格式
+    text = text.replace(/\\\[[\s\S]*?\\\]/g, (match) => {
+        const placeholder = `__PROTECTED_MATH_${protectedIndex}__`;
+        protectedFormulas[protectedIndex] = match;
+        protectedIndex++;
+        return placeholder;
+    });
+    
+    // 将 [ ... ] 格式转换为 \[ ... \] 格式（块级公式）
+    // 匹配 [ 开头，] 结尾，中间包含 LaTeX 公式的内容
+    text = text.replace(/\[(.*?)\]/g, (match, formula) => {
+        // 检查是否包含 LaTeX 命令（如 \frac, \sum, \int, \begin 等）
+        if (/(\\[a-zA-Z]+|\\[^\w\s])/.test(formula)) {
+            return `\\[${formula}\\]`;
+        }
+        return match; // 如果不包含 LaTeX 命令，保持原样
+    });
+    
+    // 将 ( ... ) 格式转换为行内公式格式 \( ... \)
+    // 使用更智能的方法来处理嵌套括号
+    let pos = 0;
+    while (pos < text.length) {
+        const openPos = text.indexOf('(', pos);
+        if (openPos === -1) break;
+        
+        // 检查这个位置之后是否有 LaTeX 命令
+        const nextLaTeX = text.substring(openPos).match(/\\[a-zA-Z]+/);
+        if (!nextLaTeX) {
+            pos = openPos + 1;
+            continue;
+        }
+        
+        // 从开括号开始，匹配到对应的闭括号
+        let depth = 0;
+        let closePos = -1;
+        for (let i = openPos; i < text.length; i++) {
+            if (text[i] === '(') {
+                depth++;
+            } else if (text[i] === ')') {
+                depth--;
+                if (depth === 0) {
+                    closePos = i;
+                    break;
+                }
+            }
+        }
+        
+        if (closePos > openPos) {
+            const formula = text.substring(openPos + 1, closePos);
+            // 检查是否包含 LaTeX 命令
+            if (/(\\[a-zA-Z]+|\\[^\w\s])/.test(formula)) {
+                const before = text.substring(0, openPos);
+                const after = text.substring(closePos + 1);
+                text = before + `\\(${formula}\\)` + after;
+                pos = before.length + formula.length + 4; // 跳过已处理的公式
+                continue;
+            }
+        }
+        
+        pos = openPos + 1;
+    }
+    
+    // 恢复被保护的 \[ ... \] 格式
+    protectedFormulas.forEach((original, index) => {
+        text = text.replace(`__PROTECTED_MATH_${index}__`, original);
+    });
+    
+    return text;
+}
+
+// 渲染数学公式的函数
+function renderMathFormulas(element) {
+    if (typeof renderMathInElement !== 'undefined') {
+        renderMathInElement(element, {
+            delimiters: [
+                {left: '$$', right: '$$', display: true},
+                {left: '\\[', right: '\\]', display: true},
+                {left: '$', right: '$', display: false},
+                {left: '\\(', right: '\\)', display: false}
+            ],
+            throwOnError: false
+        });
+        
+        // 为数学公式添加换行样式（所有设备）
+        const mathElements = element.querySelectorAll('.katex-display, .katex');
+        mathElements.forEach(mathEl => {
+            mathEl.style.whiteSpace = 'normal';
+            mathEl.style.wordWrap = 'break-word';
+            mathEl.style.overflowWrap = 'break-word';
+        });
+    }
+}
+
+// 统一处理 Markdown 和数学公式的函数
+function parseMarkdownWithMath(text) {
+    // 先将数学公式保护起来，使用 Base64 编码的占位符
+    const mathPlaceholders = [];
+    let placeholderIndex = 0;
+    
+    // 保护所有数学公式格式：\[ ... \], $$ ... $$, \( ... \), $ ... $
+    const mathPatterns = [
+        /\\\[[\s\S]*?\\\]/g,  // \[ ... \]
+        /\$\$[\s\S]*?\$\$/g,  // $$ ... $$
+        /\\\([\s\S]*?\\\)/g,  // \( ... \)
+        /\$[^$\n]+?\$/g        // $ ... $ (行内公式，避免匹配多个)
+    ];
+    
+    mathPatterns.forEach(pattern => {
+        text = text.replace(pattern, (match) => {
+            // 使用 Base64 编码的占位符，确保不会被 marked 转义
+            const placeholder = `MATH${btoa(placeholderIndex.toString()).replace(/[+\/=]/g, '')}MATH`;
+            mathPlaceholders[placeholderIndex] = match;
+            placeholderIndex++;
+            return placeholder;
+        });
+    });
+    
+    // 处理 [ ... ] 格式转换为 \[ ... \]
+    const processedText = processMathFormulas(text);
+    
+    // 使用 marked 解析
+    let html = marked.parse(processedText, {
+        breaks: true,
+        gfm: true,
+        smartLists: true,
+        smartypants: true
+    });
+    
+    // 恢复数学公式
+    mathPlaceholders.forEach((original, index) => {
+        const placeholder = `MATH${btoa(index.toString()).replace(/[+\/=]/g, '')}MATH`;
+        // 使用全局替换，确保所有占位符都被替换
+        html = html.split(placeholder).join(original);
+    });
+    
+    return html;
+}
+
 // 添加消息处理函数
 function addMessage(message, sender, containerId, useTypingEffect = true) {
     const chatMessages = document.getElementById(containerId);
@@ -241,8 +411,11 @@ function addMessage(message, sender, containerId, useTypingEffect = true) {
             const tempDiv = document.createElement('div');
             tempDiv.style.display = 'none';
             
+            // 先处理数学公式格式
+            const processedMessage = processMathFormulas(message);
+            
             // 使用 marked 解析，但添加特定配置
-            tempDiv.innerHTML = marked.parse(message, {
+            tempDiv.innerHTML = marked.parse(processedMessage, {
                 breaks: true, // 保留换行
                 gfm: true,   // 启用 GitHub 风格 Markdown
                 smartLists: true, // 优化列表渲染
@@ -314,6 +487,9 @@ function addMessage(message, sender, containerId, useTypingEffect = true) {
                             processNextElement();
                         });
                     }
+                } else {
+                    // 所有元素处理完成，渲染数学公式
+                    renderMathFormulas(messageDiv);
                 }
                 
                 chatMessages.scrollTop = chatMessages.scrollHeight;
@@ -323,7 +499,10 @@ function addMessage(message, sender, containerId, useTypingEffect = true) {
             document.body.removeChild(tempDiv);
         } else {
             // 不使用打字效果时的处理
-            messageDiv.innerHTML = marked.parse(message, {
+            // 先处理数学公式格式
+            const processedMessage = processMathFormulas(message);
+            
+            messageDiv.innerHTML = marked.parse(processedMessage, {
                 breaks: true,
                 gfm: true,
                 smartLists: true,
@@ -332,6 +511,11 @@ function addMessage(message, sender, containerId, useTypingEffect = true) {
             
             // 处理代码块
             messageDiv.querySelectorAll('pre code').forEach(block => {
+                // 跳过数学公式元素
+                if (isMathFormula(block)) {
+                    return;
+                }
+                
                 const wrapper = block.parentElement.parentElement;
                 if (wrapper.classList.contains('code-block-wrapper')) {
                     const match = block.className.match(/language-([^:]+)(?::(.+))?/);
@@ -346,6 +530,9 @@ function addMessage(message, sender, containerId, useTypingEffect = true) {
                 }
                 hljs.highlightElement(block);
             });
+            
+            // 渲染数学公式
+            renderMathFormulas(messageDiv);
         }
     }
 
@@ -560,13 +747,20 @@ function updateChatHistoryUI() {
     chatHistory.innerHTML = '';
 
     chatHistoryList.forEach(chat => {
-        // 使用第一条用户消息作为标题
-        let title = chat.title;
-        const firstUserMessage = chat.messages.find(msg => msg.role === 'user');
-        if (firstUserMessage) {
-            const tempDiv = document.createElement('div');
-            tempDiv.innerHTML = marked.parse(firstUserMessage.content);
-            title = tempDiv.textContent.slice(0, 30) + (tempDiv.textContent.length > 30 ? '...' : '');
+        // 优先使用数据库中保存的标题，如果标题为空才从消息中提取
+        let title = chat.title && chat.title.trim() ? chat.title : '新对话';
+        
+        // 如果标题为空或只有默认值，且消息已加载，则从第一条用户消息中提取
+        if ((!title || title === '新对话') && chat.messages && chat.messages.length > 0) {
+            const firstUserMessage = chat.messages.find(msg => msg.role === 'user');
+            if (firstUserMessage) {
+                const tempDiv = document.createElement('div');
+                tempDiv.innerHTML = marked.parse(firstUserMessage.content);
+                const extractedTitle = tempDiv.textContent.slice(0, 30) + (tempDiv.textContent.length > 30 ? '...' : '');
+                if (extractedTitle) {
+                    title = extractedTitle;
+                }
+            }
         }
 
         const chatElement = document.createElement('div');
@@ -614,8 +808,14 @@ function updateChatHistoryUI() {
                                 addMessage(welcomeMessage, 'ai', 'main-chat-messages');
                             }
                             
-                            // 重新加载聊天历史
-                            await loadUserChatHistory();
+                            // 从本地数组中移除该聊天记录，避免重新加载所有聊天记录
+                            const index = chatHistoryList.findIndex(c => c.id === chat.id);
+                            if (index !== -1) {
+                                chatHistoryList.splice(index, 1);
+                            }
+                            
+                            // 只更新UI，不需要重新加载所有聊天记录
+                            updateChatHistoryUI();
                         } else {
                             alert('删除失败：' + (data.error || '未知错误'));
                         }
@@ -645,6 +845,16 @@ function updateChatHistoryUI() {
             const chatMessages = document.getElementById('main-chat-messages');
             chatMessages.innerHTML = ''; // 清空聊天区域
             messageHistory.length = 0;  // 清空消息历史
+
+            // 如果消息未加载，则加载消息（延迟加载）
+            if (!chat.messages || chat.messages.length === 0) {
+                try {
+                    chat.messages = await getMessages(chat.id);
+                } catch (error) {
+                    console.error('加载消息失败:', error);
+                    chat.messages = [];
+                }
+            }
 
             // 确保消息按时间戳排序后再加载
             const sortedMessages = chat.messages.sort((a, b) => {
@@ -691,6 +901,9 @@ function updateChatHistoryUI() {
                             messageDiv.innerHTML = processThinkingTags(msg.content);
                         }
                         
+                        // 渲染数学公式
+                        renderMathFormulas(messageDiv);
+                        
                         // 确保思考内容区域展开
                         const thinkingHeaders = messageDiv.querySelectorAll('.thinking-header');
                         const thinkingContents = messageDiv.querySelectorAll('.thinking-content');
@@ -707,11 +920,19 @@ function updateChatHistoryUI() {
                         processMessageWithReferences(msg.content, messageDiv);
                     } else {
                         // 处理普通文本消息，包括代码块
-                        messageDiv.innerHTML = marked.parse(msg.content);
+                        messageDiv.innerHTML = parseMarkdownWithMath(msg.content);
                     }
+                    
+                    // 渲染数学公式
+                    renderMathFormulas(messageDiv);
                     
                     // 为所有代码块添加包装器和复制按钮
                     messageDiv.querySelectorAll('pre code').forEach(codeBlock => {
+                        // 跳过数学公式元素
+                        if (isMathFormula(codeBlock)) {
+                            return;
+                        }
+                        
                         // 检查代码块是否已经有包装器
                         if (!codeBlock.parentElement.parentElement.classList.contains('code-block-wrapper')) {
                             const wrapper = document.createElement('div');
@@ -829,6 +1050,9 @@ function updateChatHistoryUI() {
                                         processedHTML = processThinkingTags(accumulatedText);
                                         textContainer.innerHTML = processedHTML;
                                         
+                                        // 渲染数学公式
+                                        renderMathFormulas(textContainer);
+                                        
                                         // 确保思考内容区域展开
                                         const thinkingHeaders = textContainer.querySelectorAll('.thinking-header');
                                         const thinkingContents = textContainer.querySelectorAll('.thinking-content');
@@ -844,7 +1068,10 @@ function updateChatHistoryUI() {
                                         // 只有思考标签
                                         processedHTML = processThinkingTags(accumulatedText);
                                         textContainer.innerHTML = processedHTML;
-                
+                                        
+                                        // 渲染数学公式
+                                        renderMathFormulas(textContainer);
+                                        
                                         // 确保思考内容区域展开
                                         const thinkingHeaders = textContainer.querySelectorAll('.thinking-header');
                                         const thinkingContents = textContainer.querySelectorAll('.thinking-content');
@@ -861,11 +1088,17 @@ function updateChatHistoryUI() {
                                         processMessageWithReferences(accumulatedText, messageDiv);
                                     } else {
                                         // 使用 marked 解析累积的文本
-                                        textContainer.innerHTML = marked.parse(accumulatedText);
+                                        textContainer.innerHTML = parseMarkdownWithMath(accumulatedText);
+                                            renderMathFormulas(textContainer);
                                     }
                                     
                                     // 处理代码块
                                     textContainer.querySelectorAll('pre code').forEach(block => {
+                                        // 跳过数学公式元素
+                                        if (isMathFormula(block)) {
+                                            return;
+                                        }
+                                        
                                         hljs.highlightElement(block);
                                         
                                         // 检查是否已经有包装器
@@ -985,9 +1218,12 @@ function updateChatHistoryUI() {
                                                 if (accumulatedText.includes('<sy_think>') && accumulatedText.includes('<search_references>')) {
                                                     // 同时包含思考标签和引用标签
                                                     processedHTML = processThinkingTags(accumulatedText);
-                                                    textContainer.innerHTML = processedHTML;
-                                                    
-                                                    // 确保思考内容区域展开
+                                        textContainer.innerHTML = processedHTML;
+                                        
+                                        // 渲染数学公式
+                                        renderMathFormulas(textContainer);
+                                        
+                                        // 确保思考内容区域展开
                                                     const thinkingHeaders = textContainer.querySelectorAll('.thinking-header');
                                                     const thinkingContents = textContainer.querySelectorAll('.thinking-content');
                                                     
@@ -1001,9 +1237,12 @@ function updateChatHistoryUI() {
                                                 } else if (accumulatedText.includes('<sy_think>')) {
                                                     // 只有思考标签
                                                     processedHTML = processThinkingTags(accumulatedText);
-                                                    textContainer.innerHTML = processedHTML;
+                                        textContainer.innerHTML = processedHTML;
                                         
-                                                    // 确保思考内容区域展开
+                                        // 渲染数学公式
+                                        renderMathFormulas(textContainer);
+                                        
+                                        // 确保思考内容区域展开
                                                     const thinkingHeaders = textContainer.querySelectorAll('.thinking-header');
                                                     const thinkingContents = textContainer.querySelectorAll('.thinking-content');
                                         
@@ -1019,11 +1258,17 @@ function updateChatHistoryUI() {
                                                     processMessageWithReferences(accumulatedText, messageDiv);
                                                 } else {
                                                     // 使用 marked 解析累积的文本
-                                                    textContainer.innerHTML = marked.parse(accumulatedText);
+                                                    textContainer.innerHTML = parseMarkdownWithMath(accumulatedText);
+                                            renderMathFormulas(textContainer);
                                                 }
                                                 
                                                 // 处理代码块
                                                 textContainer.querySelectorAll('pre code').forEach(block => {
+                                                    // 跳过数学公式元素
+                                                    if (isMathFormula(block)) {
+                                                        return;
+                                                    }
+                                                    
                                                     hljs.highlightElement(block);
                                                     
                                                     // 检查是否已经有包装器
@@ -1126,6 +1371,8 @@ function updateChatHistoryUI() {
                                                             if (accumulatedText.includes('<sy_think>') && accumulatedText.includes('<search_references>')) {
                                                                 processedHTML = processThinkingTags(accumulatedText);
                                                                 textContainer.innerHTML = processedHTML;
+                                                                // 渲染数学公式
+                                                                renderMathFormulas(textContainer);
                                                                 const thinkingHeaders = textContainer.querySelectorAll('.thinking-header');
                                                                 const thinkingContents = textContainer.querySelectorAll('.thinking-content');
                                                                 thinkingHeaders.forEach(h => h.classList.add('expanded'));
@@ -1133,6 +1380,8 @@ function updateChatHistoryUI() {
                                                             } else if (accumulatedText.includes('<sy_think>')) {
                                                                 processedHTML = processThinkingTags(accumulatedText);
                                                                 textContainer.innerHTML = processedHTML;
+                                                                // 渲染数学公式
+                                                                renderMathFormulas(textContainer);
                                                                 const thinkingHeaders = textContainer.querySelectorAll('.thinking-header');
                                                                 const thinkingContents = textContainer.querySelectorAll('.thinking-content');
                                                                 thinkingHeaders.forEach(h => h.classList.add('expanded'));
@@ -1140,9 +1389,15 @@ function updateChatHistoryUI() {
                                                             } else if (accumulatedText.includes('<search_references>')) {
                                                                 processMessageWithReferences(accumulatedText, messageDiv);
                                                             } else {
-                                                                textContainer.innerHTML = marked.parse(accumulatedText);
+                                                                textContainer.innerHTML = parseMarkdownWithMath(accumulatedText);
+                                            renderMathFormulas(textContainer);
                                                             }
                                                             textContainer.querySelectorAll('pre code').forEach(block => {
+                                                                // 跳过数学公式元素
+                                                                if (isMathFormula(block)) {
+                                                                    return;
+                                                                }
+                                                                
                                                                 hljs.highlightElement(block);
                                                                 const pre = block.parentElement;
                                                                 if (!pre.parentElement?.classList.contains('code-block-wrapper')) {
@@ -1231,6 +1486,8 @@ function updateChatHistoryUI() {
                                                                         if (accumulatedText.includes('<sy_think>') && accumulatedText.includes('<search_references>')) {
                                                                             processedHTML = processThinkingTags(accumulatedText);
                                                                             textContainer.innerHTML = processedHTML;
+                                                                            // 渲染数学公式
+                                                                            renderMathFormulas(textContainer);
                                                                             const thinkingHeaders = textContainer.querySelectorAll('.thinking-header');
                                                                             const thinkingContents = textContainer.querySelectorAll('.thinking-content');
                                                                             thinkingHeaders.forEach(h => h.classList.add('expanded'));
@@ -1238,6 +1495,8 @@ function updateChatHistoryUI() {
                                                                         } else if (accumulatedText.includes('<sy_think>')) {
                                                                             processedHTML = processThinkingTags(accumulatedText);
                                                                             textContainer.innerHTML = processedHTML;
+                                                                            // 渲染数学公式
+                                                                            renderMathFormulas(textContainer);
                                                                             const thinkingHeaders = textContainer.querySelectorAll('.thinking-header');
                                                                             const thinkingContents = textContainer.querySelectorAll('.thinking-content');
                                                                             thinkingHeaders.forEach(h => h.classList.add('expanded'));
@@ -1245,7 +1504,8 @@ function updateChatHistoryUI() {
                                                                         } else if (accumulatedText.includes('<search_references>')) {
                                                                             processMessageWithReferences(accumulatedText, messageDiv);
                                                                         } else {
-                                                                            textContainer.innerHTML = marked.parse(accumulatedText);
+                                                                            textContainer.innerHTML = parseMarkdownWithMath(accumulatedText);
+                                            renderMathFormulas(textContainer);
                                                                         }
                                                                         textContainer.querySelectorAll('pre code').forEach(block => {
                                                                             hljs.highlightElement(block);
@@ -1385,6 +1645,11 @@ function loadChat(chat) {
     
     // 确保所有代码块都应用高亮
     document.querySelectorAll('pre code').forEach(block => {
+        // 跳过数学公式元素
+        if (isMathFormula(block)) {
+            return;
+        }
+        
         hljs.highlightElement(block);
     });
     
@@ -1421,7 +1686,7 @@ async function deleteChatHistory(chatId) {
         
         if (data.success) {
             // 如果删除的是当前对话，清空聊天区域
-            if (chat.id === currentChatId) {
+            if (chatId === currentChatId) {
                 currentChatId = null;
                 document.getElementById('main-chat-messages').innerHTML = '';
                 messageHistory.length = 0;
@@ -1431,8 +1696,14 @@ async function deleteChatHistory(chatId) {
                 addMessage(welcomeMessage, 'ai', 'main-chat-messages');
             }
             
-            // 重新加载聊天历史
-            await loadUserChatHistory();
+            // 从本地数组中移除该聊天记录，避免重新加载所有聊天记录
+            const index = chatHistoryList.findIndex(c => c.id === chatId);
+            if (index !== -1) {
+                chatHistoryList.splice(index, 1);
+            }
+            
+            // 只更新UI，不需要重新加载所有聊天记录
+            updateChatHistoryUI();
         } else {
             throw new Error(data.error || '删除聊天历史失败');
         }
@@ -1459,12 +1730,13 @@ async function loadUserChatHistory() {
             // 清空现有历史
             chatHistoryList.length = 0;
             
-            // 加载新的史记录
+            // 只加载聊天列表，不加载消息内容（延迟加载）
+            // 消息内容只在用户点击聊天记录时才加载
             for (const history of data.histories) {
                 chatHistoryList.push({
                     id: history.id,
                     title: history.title,
-                    messages: await getMessages(history.id)
+                    messages: [] // 初始为空，点击时才加载
                 });
             }
             
@@ -1739,10 +2011,18 @@ document.addEventListener('DOMContentLoaded', function() {
 
 // 修改 sendMainMessage 函数
 async function sendMainMessage() {
+    // 如果正在发送消息，直接返回，防止重复调用
+    if (isSending) {
+        return;
+    }
+
     const userInput = document.getElementById('main-user-input');
     const message = userInput.value.trim();
     
     if (!message) return;
+
+    // 设置发送状态为true
+    isSending = true;
 
     // 禁用输入和发送按钮
     userInput.disabled = true;
@@ -1852,6 +2132,9 @@ async function sendMainMessage() {
                             processedHTML = processThinkingTags(accumulatedText);
                             textContainer.innerHTML = processedHTML;
                             
+                            // 渲染数学公式
+                            renderMathFormulas(textContainer);
+                            
                             // 确保思考内容区域展开
                             const thinkingHeaders = textContainer.querySelectorAll('.thinking-header');
                             const thinkingContents = textContainer.querySelectorAll('.thinking-content');
@@ -1866,9 +2149,12 @@ async function sendMainMessage() {
                         } else if (accumulatedText.includes('<sy_think>')) {
                             // 只有思考标签
                             processedHTML = processThinkingTags(accumulatedText);
-                            textContainer.innerHTML = processedHTML;
-                
-                            // 确保思考内容区域展开
+                                        textContainer.innerHTML = processedHTML;
+                                        
+                                        // 渲染数学公式
+                                        renderMathFormulas(textContainer);
+                                        
+                                        // 确保思考内容区域展开
                             const thinkingHeaders = textContainer.querySelectorAll('.thinking-header');
                             const thinkingContents = textContainer.querySelectorAll('.thinking-content');
                 
@@ -1884,12 +2170,18 @@ async function sendMainMessage() {
                             processMessageWithReferences(accumulatedText, messageDiv);
                         } else {
                             // 使用 marked 解析累积的文本
-                            textContainer.innerHTML = marked.parse(accumulatedText);
+                            textContainer.innerHTML = parseMarkdownWithMath(accumulatedText);
+                                            renderMathFormulas(textContainer);
                         }
                         
-                        // 处理代码块
-                        textContainer.querySelectorAll('pre code').forEach(block => {
-                            hljs.highlightElement(block);
+                                                            // 处理代码块
+                                                            textContainer.querySelectorAll('pre code').forEach(block => {
+                                                                // 跳过数学公式元素
+                                                                if (isMathFormula(block)) {
+                                                                    return;
+                                                                }
+                                                                
+                                                                hljs.highlightElement(block);
                             
                             // 检查是否已经有包装器
                             const pre = block.parentElement;
@@ -1962,7 +2254,7 @@ async function sendMainMessage() {
                             formData.append('action', 'saveChatHistory');
                             
                             const firstUserMessage = messageHistory.find(msg => msg.role === 'user');
-                            let chatTitle = firstUserMessage ? firstUserMessage.content : '新对话';
+                            let chatTitle = firstUserMessage ? limitTitleLength(firstUserMessage.content, 9) : '新对话';
                             
                             formData.append('title', chatTitle);
                             formData.append('messages', JSON.stringify(messageHistory));
@@ -1987,8 +2279,49 @@ async function sendMainMessage() {
                             if (saveData.success) {
                                 if (!currentChatId) {
                                     currentChatId = saveData.chatId;
+                                    // 如果是新创建的聊天，添加到列表中
+                                    const existingChat = chatHistoryList.find(c => c.id === currentChatId);
+                                    if (!existingChat) {
+                                        chatHistoryList.unshift({
+                                            id: currentChatId,
+                                            title: chatTitle,
+                                            messages: [...messageHistory] // 使用当前的消息历史，不需要重新加载
+                                        });
+                                        updateChatHistoryUI();
+                                    }
+                                } else {
+                                    // 如果已存在的聊天，只更新标题和消息
+                                    const existingChat = chatHistoryList.find(c => c.id === currentChatId);
+                                    if (existingChat) {
+                                        existingChat.title = chatTitle;
+                                        existingChat.messages = [...messageHistory]; // 更新消息，不需要重新加载
+                                        updateChatHistoryUI();
+                                    }
                                 }
-                                await loadUserChatHistory();
+
+                                // 如果消息数量达到要求（有用户消息和助手回复），异步生成AI标题
+                                const userMessages = messageHistory.filter(msg => msg.role === 'user');
+                                const assistantMessages = messageHistory.filter(msg => msg.role === 'assistant');
+                                if (userMessages.length > 0 && assistantMessages.length > 0 && messageHistory.length >= 2) {
+                                    // 异步生成标题，不阻塞主流程
+                                    generateChatTitle(messageHistory).then(async (aiTitle) => {
+                                        if (aiTitle && aiTitle !== chatTitle && currentChatId) {
+                                            // 更新数据库中的标题
+                                            await updateChatTitle(currentChatId, aiTitle);
+                                            // 更新本地列表中的标题
+                                            const chat = chatHistoryList.find(c => c.id === currentChatId);
+                                            if (chat) {
+                                                chat.title = aiTitle;
+                                                // 使用打字机效果更新标题显示
+                                                updateChatTitleWithTypewriter(currentChatId, aiTitle);
+                                            }
+                                        }
+                                    }).catch(error => {
+                                        console.error('生成标题失败:', error);
+                                    });
+                                }
+
+                                // 不再调用 loadUserChatHistory()，避免重复加载所有聊天记录的消息
                 } else {
                                 throw new Error(saveData.error || '保存失败');
                 }
@@ -2048,6 +2381,16 @@ async function sendMainMessage() {
                 `;
                         newRegenerateButton.title = '重新回答';
                         newRegenerateButton.onclick = async () => {
+                            // 如果正在发送消息，直接返回，防止重复调用
+                            if (isSending) {
+                                return;
+                            }
+
+                            // 设置发送状态为true
+                            isSending = true;
+                            // 禁用重新回答按钮，防止重复点击
+                            newRegenerateButton.disabled = true;
+
                             // 移除当前回答的内容，但保留消息容器
                             messageDiv.innerHTML = '';
                             
@@ -2093,6 +2436,9 @@ async function sendMainMessage() {
                                         processedHTML = processThinkingTags(accumulatedText);
                                         textContainer.innerHTML = processedHTML;
                                         
+                                        // 渲染数学公式
+                                        renderMathFormulas(textContainer);
+                                        
                                         // 确保思考内容区域展开
                                         const thinkingHeaders = textContainer.querySelectorAll('.thinking-header');
                                         const thinkingContents = textContainer.querySelectorAll('.thinking-content');
@@ -2108,7 +2454,10 @@ async function sendMainMessage() {
                                         // 只有思考标签
                                         processedHTML = processThinkingTags(accumulatedText);
                                         textContainer.innerHTML = processedHTML;
-                
+                                        
+                                        // 渲染数学公式
+                                        renderMathFormulas(textContainer);
+                                        
                                         // 确保思考内容区域展开
                                         const thinkingHeaders = textContainer.querySelectorAll('.thinking-header');
                                         const thinkingContents = textContainer.querySelectorAll('.thinking-content');
@@ -2125,11 +2474,17 @@ async function sendMainMessage() {
                                         processMessageWithReferences(accumulatedText, messageDiv);
                                     } else {
                                         // 使用 marked 解析累积的文本
-                                        textContainer.innerHTML = marked.parse(accumulatedText);
+                                        textContainer.innerHTML = parseMarkdownWithMath(accumulatedText);
+                                            renderMathFormulas(textContainer);
                                     }
                                     
                                     // 处理代码块
                                     textContainer.querySelectorAll('pre code').forEach(block => {
+                                        // 跳过数学公式元素
+                                        if (isMathFormula(block)) {
+                                            return;
+                                        }
+                                        
                                         hljs.highlightElement(block);
                                         
                                         // 检查是否已经有包装器
@@ -2249,9 +2604,12 @@ async function sendMainMessage() {
                                                 if (accumulatedText.includes('<sy_think>') && accumulatedText.includes('<search_references>')) {
                                                     // 同时包含思考标签和引用标签
                                                     processedHTML = processThinkingTags(accumulatedText);
-                                                    textContainer.innerHTML = processedHTML;
-                                                    
-                                                    // 确保思考内容区域展开
+                                        textContainer.innerHTML = processedHTML;
+                                        
+                                        // 渲染数学公式
+                                        renderMathFormulas(textContainer);
+                                        
+                                        // 确保思考内容区域展开
                                                     const thinkingHeaders = textContainer.querySelectorAll('.thinking-header');
                                                     const thinkingContents = textContainer.querySelectorAll('.thinking-content');
                                                     
@@ -2265,9 +2623,12 @@ async function sendMainMessage() {
                                                 } else if (accumulatedText.includes('<sy_think>')) {
                                                     // 只有思考标签
                                                     processedHTML = processThinkingTags(accumulatedText);
-                                                    textContainer.innerHTML = processedHTML;
+                                        textContainer.innerHTML = processedHTML;
                                         
-                                                    // 确保思考内容区域展开
+                                        // 渲染数学公式
+                                        renderMathFormulas(textContainer);
+                                        
+                                        // 确保思考内容区域展开
                                                     const thinkingHeaders = textContainer.querySelectorAll('.thinking-header');
                                                     const thinkingContents = textContainer.querySelectorAll('.thinking-content');
                                         
@@ -2283,11 +2644,17 @@ async function sendMainMessage() {
                                                     processMessageWithReferences(accumulatedText, messageDiv);
                                                 } else {
                                                     // 使用 marked 解析累积的文本
-                                                    textContainer.innerHTML = marked.parse(accumulatedText);
+                                                    textContainer.innerHTML = parseMarkdownWithMath(accumulatedText);
+                                            renderMathFormulas(textContainer);
                                                 }
                                                 
                                                 // 处理代码块
                                                 textContainer.querySelectorAll('pre code').forEach(block => {
+                                                    // 跳过数学公式元素
+                                                    if (isMathFormula(block)) {
+                                                        return;
+                                                    }
+                                                    
                                                     hljs.highlightElement(block);
                                                     
                                                     // 检查是否已经有包装器
@@ -2390,6 +2757,8 @@ async function sendMainMessage() {
                                                             if (accumulatedText.includes('<sy_think>') && accumulatedText.includes('<search_references>')) {
                                                                 processedHTML = processThinkingTags(accumulatedText);
                                                                 textContainer.innerHTML = processedHTML;
+                                                                // 渲染数学公式
+                                                                renderMathFormulas(textContainer);
                                                                 const thinkingHeaders = textContainer.querySelectorAll('.thinking-header');
                                                                 const thinkingContents = textContainer.querySelectorAll('.thinking-content');
                                                                 thinkingHeaders.forEach(h => h.classList.add('expanded'));
@@ -2397,6 +2766,8 @@ async function sendMainMessage() {
                                                             } else if (accumulatedText.includes('<sy_think>')) {
                                                                 processedHTML = processThinkingTags(accumulatedText);
                                                                 textContainer.innerHTML = processedHTML;
+                                                                // 渲染数学公式
+                                                                renderMathFormulas(textContainer);
                                                                 const thinkingHeaders = textContainer.querySelectorAll('.thinking-header');
                                                                 const thinkingContents = textContainer.querySelectorAll('.thinking-content');
                                                                 thinkingHeaders.forEach(h => h.classList.add('expanded'));
@@ -2404,9 +2775,15 @@ async function sendMainMessage() {
                                                             } else if (accumulatedText.includes('<search_references>')) {
                                                                 processMessageWithReferences(accumulatedText, messageDiv);
                                                             } else {
-                                                                textContainer.innerHTML = marked.parse(accumulatedText);
+                                                                textContainer.innerHTML = parseMarkdownWithMath(accumulatedText);
+                                            renderMathFormulas(textContainer);
                                                             }
                                                             textContainer.querySelectorAll('pre code').forEach(block => {
+                                                                // 跳过数学公式元素
+                                                                if (isMathFormula(block)) {
+                                                                    return;
+                                                                }
+                                                                
                                                                 hljs.highlightElement(block);
                                                                 const pre = block.parentElement;
                                                                 if (!pre.parentElement?.classList.contains('code-block-wrapper')) {
@@ -2495,6 +2872,8 @@ async function sendMainMessage() {
                                                                         if (accumulatedText.includes('<sy_think>') && accumulatedText.includes('<search_references>')) {
                                                                             processedHTML = processThinkingTags(accumulatedText);
                                                                             textContainer.innerHTML = processedHTML;
+                                                                            // 渲染数学公式
+                                                                            renderMathFormulas(textContainer);
                                                                             const thinkingHeaders = textContainer.querySelectorAll('.thinking-header');
                                                                             const thinkingContents = textContainer.querySelectorAll('.thinking-content');
                                                                             thinkingHeaders.forEach(h => h.classList.add('expanded'));
@@ -2502,6 +2881,8 @@ async function sendMainMessage() {
                                                                         } else if (accumulatedText.includes('<sy_think>')) {
                                                                             processedHTML = processThinkingTags(accumulatedText);
                                                                             textContainer.innerHTML = processedHTML;
+                                                                            // 渲染数学公式
+                                                                            renderMathFormulas(textContainer);
                                                                             const thinkingHeaders = textContainer.querySelectorAll('.thinking-header');
                                                                             const thinkingContents = textContainer.querySelectorAll('.thinking-content');
                                                                             thinkingHeaders.forEach(h => h.classList.add('expanded'));
@@ -2509,7 +2890,8 @@ async function sendMainMessage() {
                                                                         } else if (accumulatedText.includes('<search_references>')) {
                                                                             processMessageWithReferences(accumulatedText, messageDiv);
                                                                         } else {
-                                                                            textContainer.innerHTML = marked.parse(accumulatedText);
+                                                                            textContainer.innerHTML = parseMarkdownWithMath(accumulatedText);
+                                            renderMathFormulas(textContainer);
                                                                         }
                                                                         textContainer.querySelectorAll('pre code').forEach(block => {
                                                                             hljs.highlightElement(block);
@@ -2596,6 +2978,10 @@ async function sendMainMessage() {
                                         } catch (error) {
                                             console.error('Regenerate Error:', error);
                                             messageDiv.innerHTML = '重新生成回答时发生错误，请稍后重试';
+                                        } finally {
+                                            // 重置发送状态并重新启用按钮
+                                            isSending = false;
+                                            newRegenerateButton.disabled = false;
                                         }
                                     };
 
@@ -2606,6 +2992,10 @@ async function sendMainMessage() {
                             } catch (error) {
                                 console.error('Regenerate Error:', error);
                                 messageDiv.innerHTML = '重新生成回答时发生错误，请稍后重试';
+                            } finally {
+                                // 重置发送状态并重新启用按钮
+                                isSending = false;
+                                newRegenerateButton.disabled = false;
                             }
                         };
 
@@ -2676,9 +3066,12 @@ async function sendMainMessage() {
                     if (accumulatedText.includes('<sy_think>') && accumulatedText.includes('<search_references>')) {
                         // 同时包含思考标签和引用标签
                         processedHTML = processThinkingTags(accumulatedText);
-                        textContainer.innerHTML = processedHTML;
-                        
-                        // 确保思考内容区域展开
+                                        textContainer.innerHTML = processedHTML;
+                                        
+                                        // 渲染数学公式
+                                        renderMathFormulas(textContainer);
+                                        
+                                        // 确保思考内容区域展开
                         const thinkingHeaders = textContainer.querySelectorAll('.thinking-header');
                         const thinkingContents = textContainer.querySelectorAll('.thinking-content');
                         
@@ -2692,9 +3085,12 @@ async function sendMainMessage() {
                     } else if (accumulatedText.includes('<sy_think>')) {
                         // 只有思考标签
                         processedHTML = processThinkingTags(accumulatedText);
-                        textContainer.innerHTML = processedHTML;
-                
-                        // 确保思考内容区域展开
+                                        textContainer.innerHTML = processedHTML;
+                                        
+                                        // 渲染数学公式
+                                        renderMathFormulas(textContainer);
+                                        
+                                        // 确保思考内容区域展开
                         const thinkingHeaders = textContainer.querySelectorAll('.thinking-header');
                         const thinkingContents = textContainer.querySelectorAll('.thinking-content');
                 
@@ -2710,12 +3106,18 @@ async function sendMainMessage() {
                         processMessageWithReferences(accumulatedText, messageDiv);
                     } else {
                         // 使用 marked 解析累积的文本
-                        textContainer.innerHTML = marked.parse(accumulatedText);
+                        textContainer.innerHTML = parseMarkdownWithMath(accumulatedText);
+                                            renderMathFormulas(textContainer);
                     }
                     
-                    // 处理代码块
-                    textContainer.querySelectorAll('pre code').forEach(block => {
-                        hljs.highlightElement(block);
+                                                            // 处理代码块
+                                                            textContainer.querySelectorAll('pre code').forEach(block => {
+                                                                // 跳过数学公式元素
+                                                                if (isMathFormula(block)) {
+                                                                    return;
+                                                                }
+                                                                
+                                                                hljs.highlightElement(block);
                         
                         // 检查是否已经有包装器
                         const pre = block.parentElement;
@@ -2757,7 +3159,7 @@ async function sendMainMessage() {
                     formData.append('action', 'saveChatHistory');
                     
                     const firstUserMessage = messageHistory.find(msg => msg.role === 'user');
-                    let chatTitle = firstUserMessage ? firstUserMessage.content : '新对话';
+                    let chatTitle = firstUserMessage ? limitTitleLength(firstUserMessage.content, 9) : '新对话';
                     
                     formData.append('title', chatTitle);
                     formData.append('messages', JSON.stringify(messageHistory));
@@ -2782,8 +3184,49 @@ async function sendMainMessage() {
                         if (saveData.success) {
                             if (!currentChatId) {
                                 currentChatId = saveData.chatId;
+                                // 如果是新创建的聊天，添加到列表中
+                                const existingChat = chatHistoryList.find(c => c.id === currentChatId);
+                                if (!existingChat) {
+                                    chatHistoryList.unshift({
+                                        id: currentChatId,
+                                        title: chatTitle,
+                                        messages: [...messageHistory] // 使用当前的消息历史，不需要重新加载
+                                    });
+                                    updateChatHistoryUI();
+                                }
+                            } else {
+                                // 如果已存在的聊天，只更新标题和消息
+                                const existingChat = chatHistoryList.find(c => c.id === currentChatId);
+                                if (existingChat) {
+                                    existingChat.title = chatTitle;
+                                    existingChat.messages = [...messageHistory]; // 更新消息，不需要重新加载
+                                    updateChatHistoryUI();
+                                }
                             }
-                            await loadUserChatHistory();
+
+                            // 如果消息数量达到要求（有用户消息和助手回复），异步生成AI标题
+                            const userMessages = messageHistory.filter(msg => msg.role === 'user');
+                            const assistantMessages = messageHistory.filter(msg => msg.role === 'assistant');
+                            if (userMessages.length > 0 && assistantMessages.length > 0 && messageHistory.length >= 2) {
+                                // 异步生成标题，不阻塞主流程
+                                generateChatTitle(messageHistory).then(async (aiTitle) => {
+                                    if (aiTitle && aiTitle !== chatTitle && currentChatId) {
+                                        // 更新数据库中的标题
+                                        await updateChatTitle(currentChatId, aiTitle);
+                                        // 更新本地列表中的标题
+                                        const chat = chatHistoryList.find(c => c.id === currentChatId);
+                                        if (chat) {
+                                            chat.title = aiTitle;
+                                            // 使用打字机效果更新标题显示
+                                            updateChatTitleWithTypewriter(currentChatId, aiTitle);
+                                        }
+                                    }
+                                }).catch(error => {
+                                    console.error('生成标题失败:', error);
+                                });
+                            }
+
+                            // 不再调用 loadUserChatHistory()，避免重复加载所有聊天记录的消息
                     } else {
                         throw new Error(saveData.error || '保存失败');
                         }
@@ -2843,6 +3286,16 @@ async function sendMainMessage() {
                     `;
                     newRegenerateButton.title = '重新回答';
                     newRegenerateButton.onclick = async () => {
+                        // 如果正在发送消息，直接返回，防止重复调用
+                        if (isSending) {
+                            return;
+                        }
+
+                        // 设置发送状态为true
+                        isSending = true;
+                        // 禁用重新回答按钮，防止重复点击
+                        newRegenerateButton.disabled = true;
+
                         // 移除当前回答的内容，但保留消息容器
                         messageDiv.innerHTML = '';
                         
@@ -2886,9 +3339,12 @@ async function sendMainMessage() {
                                 if (accumulatedText.includes('<sy_think>') && accumulatedText.includes('<search_references>')) {
                                     // 同时包含思考标签和引用标签
                                     processedHTML = processThinkingTags(accumulatedText);
-                                    textContainer.innerHTML = processedHTML;
-                                    
-                                    // 确保思考内容区域展开
+                                        textContainer.innerHTML = processedHTML;
+                                        
+                                        // 渲染数学公式
+                                        renderMathFormulas(textContainer);
+                                        
+                                        // 确保思考内容区域展开
                                     const thinkingHeaders = textContainer.querySelectorAll('.thinking-header');
                                     const thinkingContents = textContainer.querySelectorAll('.thinking-content');
                                     
@@ -2902,9 +3358,12 @@ async function sendMainMessage() {
                                 } else if (accumulatedText.includes('<sy_think>')) {
                                     // 只有思考标签
                                     processedHTML = processThinkingTags(accumulatedText);
-                                    textContainer.innerHTML = processedHTML;
-                
-                                    // 确保思考内容区域展开
+                                        textContainer.innerHTML = processedHTML;
+                                        
+                                        // 渲染数学公式
+                                        renderMathFormulas(textContainer);
+                                        
+                                        // 确保思考内容区域展开
                                     const thinkingHeaders = textContainer.querySelectorAll('.thinking-header');
                                     const thinkingContents = textContainer.querySelectorAll('.thinking-content');
                 
@@ -2920,12 +3379,18 @@ async function sendMainMessage() {
                                     processMessageWithReferences(accumulatedText, messageDiv);
                                 } else {
                                     // 使用 marked 解析累积的文本
-                                    textContainer.innerHTML = marked.parse(accumulatedText);
+                                    textContainer.innerHTML = parseMarkdownWithMath(accumulatedText);
+                                            renderMathFormulas(textContainer);
                                 }
                                 
-                                // 处理代码块
-                                textContainer.querySelectorAll('pre code').forEach(block => {
-                                    hljs.highlightElement(block);
+                                                            // 处理代码块
+                                                            textContainer.querySelectorAll('pre code').forEach(block => {
+                                                                // 跳过数学公式元素
+                                                                if (isMathFormula(block)) {
+                                                                    return;
+                                                                }
+                                                                
+                                                                hljs.highlightElement(block);
                                     
                                     // 检查是否已经有包装器
                                     const pre = block.parentElement;
@@ -3006,6 +3471,10 @@ async function sendMainMessage() {
                         } catch (error) {
                             console.error('Regenerate Error:', error);
                             messageDiv.innerHTML = '重新生成回答时发生错误，请稍后重试';
+                        } finally {
+                            // 重置发送状态并重新启用按钮
+                            isSending = false;
+                            newRegenerateButton.disabled = false;
                         }
                     };
 
@@ -3025,10 +3494,199 @@ async function sendMainMessage() {
             messageDiv.innerHTML = '发生了外部错误，请稍后重试（伤心地垂下耳朵）';
         }
     } finally {
+        // 重置发送状态
+        isSending = false;
         // 重新启用输入和发送按钮
         userInput.disabled = false;
         sendButton.disabled = false;
         userInput.focus();
+    }
+}
+
+// 限制标题长度为9个字符（中文字符占1个位置，英文/数字占0.5个位置）
+function limitTitleLength(title, maxLength = 9) {
+    if (!title || !title.trim()) {
+        return '新对话';
+    }
+    
+    title = title.trim();
+    let charCount = 0;
+    let limitedTitle = '';
+    
+    for (let i = 0; i < title.length; i++) {
+        const char = title[i];
+        // 判断是否为中文字符
+        if (/[\u4e00-\u9fa5]/.test(char)) {
+            charCount += 1;
+        } else {
+            charCount += 0.5; // 英文/数字算半个字符
+        }
+        if (charCount <= maxLength) {
+            limitedTitle += char;
+        } else {
+            break;
+        }
+    }
+    
+    return limitedTitle.trim() || '新对话';
+}
+
+// 使用AI生成聊天标题
+async function generateChatTitle(messages) {
+    try {
+        // 如果消息数量少于2条，使用第一条用户消息作为标题
+        if (messages.length < 2) {
+            const firstUserMessage = messages.find(msg => msg.role === 'user');
+            if (firstUserMessage) {
+                let title = firstUserMessage.content.replace(/[。，、；：：！？\s]+/g, ' ').trim();
+                return limitTitleLength(title, 9);
+            }
+            return '新对话';
+        }
+
+        // 提取对话内容（只包含用户和助手的消息）
+        const conversationText = messages
+            .filter(msg => msg.role === 'user' || msg.role === 'assistant')
+            .slice(0, 10) // 只取前10条消息，避免内容过长
+            .map(msg => {
+                // 清理消息内容，移除特殊标记和HTML标签
+                let content = msg.content
+                    .replace(/<sy_think>[\s\S]*?<\/sy_think>/gi, '') // 移除思考内容
+                    .replace(/<search_references>[\s\S]*?<\/search_references>/gi, '') // 移除搜索引用
+                    .replace(/<[^>]+>/g, '') // 移除HTML标签
+                    .slice(0, 200); // 每条消息最多200字符
+                return `${msg.role === 'user' ? '用户' : '助手'}: ${content}`;
+            })
+            .join('\n');
+
+        // 构建提示词
+        const prompt = `请根据以下对话内容，生成一个简洁的标题（不超过9个汉字），要求：
+1. 标题要能准确概括对话的主要内容
+2. 标题要简洁明了，避免使用标点符号
+3. 只用中文回答，不要添加任何其他说明
+4. 标题长度必须严格控制在9个汉字以内
+
+对话内容：
+${conversationText}
+
+标题：`;
+
+        // 调用AI API生成标题
+        const response = await fetch('/api.php', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                action: 'chat',
+                messages: [
+                    {
+                        role: 'system',
+                        content: '你是一个专业的标题生成助手，擅长根据对话内容生成简洁准确的标题。'
+                    },
+                    {
+                        role: 'user',
+                        content: prompt
+                    }
+                ],
+                model: getCurrentModel(),
+                stream: false
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error('生成标题失败');
+        }
+
+        const data = await response.json();
+        
+        // 检查响应格式，可能是 {success: true, content: ...} 或者直接的API响应
+        let titleContent = '';
+        if (data.success && data.content) {
+            titleContent = data.content;
+        } else if (data.choices && data.choices[0] && data.choices[0].message) {
+            titleContent = data.choices[0].message.content;
+        } else if (typeof data === 'string') {
+            titleContent = data;
+        }
+        
+        if (titleContent) {
+            // 清理标题内容，移除可能的标点和多余内容
+            let title = titleContent.trim()
+                .replace(/^标题[：:]\s*/i, '')
+                .replace(/[。，、；：：！？\s]+/g, ' ')
+                .trim();
+            
+            // 使用辅助函数限制标题长度为9个字符
+            return limitTitleLength(title, 9);
+        }
+
+        // 如果生成失败，使用第一条用户消息作为标题
+        const firstUserMessage = messages.find(msg => msg.role === 'user');
+        if (firstUserMessage) {
+            let title = firstUserMessage.content.replace(/[。，、；：：！？\s]+/g, ' ').trim();
+            return limitTitleLength(title, 9);
+        }
+        return '新对话';
+    } catch (error) {
+        console.error('生成标题失败:', error);
+        // 如果生成失败，使用第一条用户消息作为标题
+        const firstUserMessage = messages.find(msg => msg.role === 'user');
+        if (firstUserMessage) {
+            let title = firstUserMessage.content.replace(/[。，、；：：！？\s]+/g, ' ').trim();
+            return limitTitleLength(title, 9);
+        }
+        return '新对话';
+    }
+}
+
+// 打字机效果显示文本
+function typewriterEffect(element, text, speed = 50) {
+    element.textContent = '';
+    let index = 0;
+    
+    function typeChar() {
+        if (index < text.length) {
+            element.textContent += text[index];
+            index++;
+            setTimeout(typeChar, speed);
+        }
+    }
+    
+    typeChar();
+}
+
+// 更新聊天标题
+async function updateChatTitle(chatId, newTitle) {
+    try {
+        const formData = new FormData();
+        formData.append('action', 'updateChatTitle');
+        formData.append('chatId', chatId);
+        formData.append('title', newTitle);
+
+        const response = await fetch('api.php', {
+            method: 'POST',
+            body: formData
+        });
+
+        const data = await response.json();
+        return data.success;
+    } catch (error) {
+        console.error('更新标题失败:', error);
+        return false;
+    }
+}
+
+// 更新聊天标题显示（带打字机效果）
+function updateChatTitleWithTypewriter(chatId, newTitle) {
+    // 查找对应的聊天记录元素
+    const chatElement = document.querySelector(`.chat-history-item[data-id="${chatId}"]`);
+    if (chatElement) {
+        const titleElement = chatElement.querySelector('.chat-title');
+        if (titleElement) {
+            // 使用打字机效果显示新标题
+            typewriterEffect(titleElement, newTitle, 30);
+        }
     }
 }
 
@@ -3039,7 +3697,7 @@ async function saveChatToDatabase() {
         formData.append('action', 'saveChatHistory');
         
         const firstUserMessage = messageHistory.find(msg => msg.role === 'user');
-        let chatTitle = firstUserMessage ? firstUserMessage.content : '新对话';
+        let chatTitle = firstUserMessage ? limitTitleLength(firstUserMessage.content, 9) : '新对话';
         
         const messagesWithOrder = messageHistory.map((msg, index) => ({
             ...msg,
@@ -3063,9 +3721,49 @@ async function saveChatToDatabase() {
         if (saveData.success) {
             if (!currentChatId) {
                 currentChatId = saveData.chatId;
+                // 如果是新创建的聊天，添加到列表中
+                const existingChat = chatHistoryList.find(c => c.id === currentChatId);
+                if (!existingChat) {
+                    chatHistoryList.unshift({
+                        id: currentChatId,
+                        title: chatTitle,
+                        messages: [...messageHistory] // 使用当前的消息历史，不需要重新加载
+                    });
+                    updateChatHistoryUI();
+                }
+            } else {
+                // 如果已存在的聊天，只更新标题和消息
+                const existingChat = chatHistoryList.find(c => c.id === currentChatId);
+                if (existingChat) {
+                    existingChat.title = chatTitle;
+                    existingChat.messages = [...messageHistory]; // 更新消息，不需要重新加载
+                    updateChatHistoryUI();
+                }
             }
-            // 只更新侧边栏的聊天历史列表，不重新加载消息
-            await loadUserChatHistory();
+
+            // 如果消息数量达到要求（有用户消息和助手回复），异步生成AI标题
+            const userMessages = messageHistory.filter(msg => msg.role === 'user');
+            const assistantMessages = messageHistory.filter(msg => msg.role === 'assistant');
+            if (userMessages.length > 0 && assistantMessages.length > 0 && messageHistory.length >= 2) {
+                // 异步生成标题，不阻塞主流程
+                generateChatTitle(messageHistory).then(async (aiTitle) => {
+                    if (aiTitle && aiTitle !== chatTitle && currentChatId) {
+                        // 更新数据库中的标题
+                        await updateChatTitle(currentChatId, aiTitle);
+                        // 更新本地列表中的标题
+                        const chat = chatHistoryList.find(c => c.id === currentChatId);
+                        if (chat) {
+                            chat.title = aiTitle;
+                            // 使用打字机效果更新标题显示
+                            updateChatTitleWithTypewriter(currentChatId, aiTitle);
+                        }
+                    }
+                }).catch(error => {
+                    console.error('生成标题失败:', error);
+                });
+            }
+            
+            // 不再调用 loadUserChatHistory()，避免重复加载所有聊天记录的消息
         }
     } catch (error) {
         console.error('保存聊天历史失败:', error);
@@ -3201,8 +3899,14 @@ deleteButton.addEventListener('click', async (e) => {
                         addMessage(welcomeMessage, 'ai', 'main-chat-messages');
                     }
                     
-                    // 重新加载聊天历史
-                    await loadUserChatHistory();
+                    // 从本地数组中移除该聊天记录，避免重新加载所有聊天记录
+                    const index = chatHistoryList.findIndex(c => c.id === chat.id);
+                    if (index !== -1) {
+                        chatHistoryList.splice(index, 1);
+                    }
+                    
+                    // 只更新UI，不需要重新加载所有聊天记录
+                    updateChatHistoryUI();
                 } else {
                     alert('删除失败：' + (data.error || '未知错误'));
                 }
@@ -3218,7 +3922,7 @@ deleteButton.addEventListener('click', async (e) => {
 function processThinkingTags(content) {
     // 检查是否包含思考标签
     if (!content.includes('<sy_think>')) {
-        return marked.parse(content);
+        return parseMarkdownWithMath(content);
     }
     
     // 检查是否同时包含搜索引用
@@ -3345,7 +4049,7 @@ function processThinkingTags(content) {
         
         // 然后添加主要内容
         if (mainContent.trim()) {
-            html += marked.parse(mainContent);
+            html += parseMarkdownWithMath(mainContent);
         }
         
         // 确保toggleThinking函数存在
@@ -3418,7 +4122,10 @@ function processMessageWithReferences(content, messageDiv) {
             references = JSON.parse(referencesJson);
             
             // 首先渲染主要内容
-            messageDiv.innerHTML = marked.parse(mainContent);
+            messageDiv.innerHTML = parseMarkdownWithMath(mainContent);
+            
+            // 渲染数学公式
+            renderMathFormulas(messageDiv);
             
             // 然后添加引用容器
             const referenceContainer = document.createElement('div');
@@ -3447,6 +4154,11 @@ function processMessageWithReferences(content, messageDiv) {
             
             // 高亮代码块
             messageDiv.querySelectorAll('pre code').forEach(block => {
+                // 跳过数学公式元素
+                if (isMathFormula(block)) {
+                    return;
+                }
+                
                 hljs.highlightElement(block);
             });
             
@@ -3454,12 +4166,14 @@ function processMessageWithReferences(content, messageDiv) {
         } catch (error) {
             console.error('解析引用数据失败:', error);
             // 如果解析失败，回退到普通渲染
-            messageDiv.innerHTML = marked.parse(content);
+            messageDiv.innerHTML = parseMarkdownWithMath(content);
+            renderMathFormulas(messageDiv);
             return false;
         }
     } else {
         // 普通消息，直接解析
-        messageDiv.innerHTML = marked.parse(content);
+        messageDiv.innerHTML = parseMarkdownWithMath(content);
+        renderMathFormulas(messageDiv);
         return false;
     }
 }

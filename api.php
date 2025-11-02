@@ -125,6 +125,12 @@ try {
         case 'deleteChatHistory':
             handleDeleteChatHistory($mysqli);
             break;
+        case 'updateChatTitle':
+            handleUpdateChatTitle($mysqli);
+            break;
+        case 'chat':
+            handleChat();
+            break;
         case 'register':
             try {
                 // 取注册信息
@@ -553,6 +559,42 @@ function handleDeleteChatHistory($mysqli) {
     } catch (Exception $e) {
         $mysqli->rollback();
         echo json_encode(['success' => false, 'error' => '删除失败: ' . $e->getMessage()]);
+    }
+}
+
+// 更新聊天标题
+function handleUpdateChatTitle($mysqli) {
+    if (!isset($_SESSION['user_id'])) {
+        echo json_encode(['success' => false, 'error' => '未登录']);
+        return;
+    }
+    
+    $userId = $_SESSION['user_id'];
+    $chatId = $_POST['chatId'] ?? '';
+    $title = $_POST['title'] ?? '';
+    
+    if (!$chatId) {
+        echo json_encode(['success' => false, 'error' => '缺少聊天ID']);
+        return;
+    }
+    
+    if (empty($title)) {
+        echo json_encode(['success' => false, 'error' => '标题不能为空']);
+        return;
+    }
+    
+    try {
+        $stmt = $mysqli->prepare('UPDATE chat_histories SET title = ? WHERE id = ? AND user_id = ?');
+        $stmt->bind_param('sii', $title, $chatId, $userId);
+        $stmt->execute();
+        
+        if ($stmt->affected_rows > 0) {
+            echo json_encode(['success' => true]);
+        } else {
+            echo json_encode(['success' => false, 'error' => '更新失败或记录不存在']);
+        }
+    } catch (Exception $e) {
+        echo json_encode(['success' => false, 'error' => '更新失败: ' . $e->getMessage()]);
     }
 }
 

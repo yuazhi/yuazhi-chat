@@ -21,7 +21,7 @@ if (!isset($_SESSION['user_id']) && isset($_COOKIE['user_id'])) {
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <!-- SEO Meta Tags -->
     <meta name="description" content="鸢栀AI助手是一款智能对话机器人，提供智能问答、图片创作、代码编程等多样化服务。作为新一代AI助手，我们致力于为用户提供更智能、更贴心的对话体验，让AI服务更加便捷、高效。">
-    <meta name="keywords" content="鸢栀AI,AI助手,智能对话,AI绘画,AI编程,人工智能,聊天机器人,AI问答,智能助手">
+    <meta name="keywords" content="鸢栀AI,AI助手,智能对话,AI绘画,AI编程,人工智能,聊天机器人,AI问答,智能助手,福瑞机器人，furry，furry Ai，兽圈机器人，虚拟福瑞">
     <meta name="author" content="鸢栀AI">
     <meta name="robots" content="index, follow">
     <!-- Open Graph Tags -->
@@ -32,6 +32,7 @@ if (!isset($_SESSION['user_id']) && isset($_COOKIE['user_id'])) {
     <meta property="og:type" content="website">
     <meta property="og:locale" content="zh_CN">
     <!-- Twitter Card Tags -->
+    
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="鸢栀AI助手 - 智能对话新体验">
     <meta name="twitter:description" content="提供智能问答、图片创作、代码编程等多样化AI服务，打造更智能的对话体验">
@@ -40,16 +41,23 @@ if (!isset($_SESSION['user_id']) && isset($_COOKIE['user_id'])) {
     <link rel="stylesheet" href="/styles.css">
     <link rel="stylesheet" href="/index.css">
     <link rel="stylesheet" href="/atom-one-dark.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
     <script src="/highlight.min.js"></script>
     <script src="/marked.umd.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
     <link rel="icon" href="favicon.ico" type="image/x-icon">
     <link rel="manifest" href="/manifest.json">
     <meta name="theme-color" content="#343541">
     <link rel="apple-touch-icon" href="/icons/icon-192x192.png">
-    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black">
     <script src="api.js" type="module"></script>
+    <script defer src="https://stat.rjjr.cn/random-string.js" data-website-id="d7715b9f-667b-4a6e-a011-31f076709162"></script>
+    <script>LA.init({id:"3Kr8htmZBQXBnZTQ",ck:"3Kr8htmZBQXBnZTQ",screenRecord:true})</script>
     <script>
+    console.log('%c萬事屋日記', 'font-size: 40px; color: #f5a8a4; font-weight: bold;');
+    console.log('%c加入我們: yuazhi@rjjr.cn', 'font-size: 20px; color: #ffeb3b;');
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
                 navigator.serviceWorker.register('/sw.js')
@@ -252,20 +260,25 @@ if (!isset($_SESSION['user_id']) && isset($_COOKIE['user_id'])) {
                     <!-- 消息将在这里动态添加 -->
                 </div>
 
-                <button class="stop-generate" id="stopGenerate">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <rect x="6" y="6" width="12" height="12" stroke-linecap="round" stroke-linejoin="round"/>
-                    </svg>
-                    停止生成
-                </button>
-
-                <div class="input-container with-stop-button">
+                <div class="input-container">
                     <textarea 
                         id="main-user-input" 
                         placeholder="输入消息..." 
                         rows="1"
                     ></textarea>
-                    <button id="send-button" class="send-button">发送</button>
+                    <button id="search-button" class="search-button" title="联网搜索">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"/>
+                            <path d="M2 12h20"/>
+                            <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+                        </svg>
+                    </button>
+                    <button id="send-button" class="send-button" title="发送">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M22 2L11 13" stroke-linecap="round" stroke-linejoin="round"/>
+                            <path d="M22 2L15 22L11 13L2 9L22 2Z" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                    </button>
                 </div>
             </div>
         </main>

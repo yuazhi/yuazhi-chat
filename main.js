@@ -20,7 +20,7 @@ function getBrowserType() {
     }
     return 'other';
 }
- 
+
 // 在 DOMContentLoaded 时添加特殊类
 document.addEventListener('DOMContentLoaded', function() {
     const browserType = getBrowserType();
@@ -2290,30 +2290,47 @@ async function sendMainMessage() {
                                         updateChatHistoryUI();
                                     }
                                 } else {
-                                    // 如果已存在的聊天，只更新标题和消息
+                                    // 如果已存在的聊天，只更新消息，不重置标题（避免覆盖已生成的AI标题）
                                     const existingChat = chatHistoryList.find(c => c.id === currentChatId);
                                     if (existingChat) {
-                                        existingChat.title = chatTitle;
+                                        // 只有在标题是默认值"新对话"时，才更新为临时标题
+                                        if (!existingChat.title || existingChat.title === '新对话') {
+                                            existingChat.title = chatTitle;
+                                        }
                                         existingChat.messages = [...messageHistory]; // 更新消息，不需要重新加载
                                         updateChatHistoryUI();
                                     }
                                 }
 
                                 // 如果消息数量达到要求（有用户消息和助手回复），异步生成AI标题
+                                // 只在标题还是初始默认值时才更新（避免每次发送消息都更新标题）
                                 const userMessages = messageHistory.filter(msg => msg.role === 'user');
                                 const assistantMessages = messageHistory.filter(msg => msg.role === 'assistant');
-                                if (userMessages.length > 0 && assistantMessages.length > 0 && messageHistory.length >= 2) {
+                                const existingChat = chatHistoryList.find(c => c.id === currentChatId);
+                                const currentTitle = existingChat ? existingChat.title : chatTitle;
+                                // 判断是否需要生成AI标题：
+                                // 1. 消息数量>=2且有用户和助手消息
+                                // 2. 标题是默认值"新对话"或者是临时标题（从第一条消息提取的）
+                                // 3. 标题还未被AI生成过（避免重复生成）
+                                const isDefaultTitle = !currentTitle || currentTitle === '新对话' || currentTitle === chatTitle;
+                                // 确保只在首次对话或标题失败时生成，避免重复生成
+                                const shouldGenerateTitle = userMessages.length > 0 && assistantMessages.length > 0 && 
+                                                           messageHistory.length >= 2 && isDefaultTitle &&
+                                                           (currentTitle === '新对话' || currentTitle === chatTitle);
+                                if (shouldGenerateTitle) {
                                     // 异步生成标题，不阻塞主流程
                                     generateChatTitle(messageHistory).then(async (aiTitle) => {
                                         if (aiTitle && aiTitle !== chatTitle && currentChatId) {
                                             // 更新数据库中的标题
-                                            await updateChatTitle(currentChatId, aiTitle);
-                                            // 更新本地列表中的标题
-                                            const chat = chatHistoryList.find(c => c.id === currentChatId);
-                                            if (chat) {
-                                                chat.title = aiTitle;
-                                                // 使用打字机效果更新标题显示
-                                                updateChatTitleWithTypewriter(currentChatId, aiTitle);
+                                            const updateSuccess = await updateChatTitle(currentChatId, aiTitle);
+                                            if (updateSuccess) {
+                                                // 更新本地列表中的标题
+                                                const chat = chatHistoryList.find(c => c.id === currentChatId);
+                                                if (chat) {
+                                                    chat.title = aiTitle;
+                                                    // 使用打字机效果更新标题显示
+                                                    updateChatTitleWithTypewriter(currentChatId, aiTitle);
+                                                }
                                             }
                                         }
                                     }).catch(error => {
@@ -3195,30 +3212,47 @@ async function sendMainMessage() {
                                     updateChatHistoryUI();
                                 }
                             } else {
-                                // 如果已存在的聊天，只更新标题和消息
+                                // 如果已存在的聊天，只更新消息，不重置标题（避免覆盖已生成的AI标题）
                                 const existingChat = chatHistoryList.find(c => c.id === currentChatId);
                                 if (existingChat) {
-                                    existingChat.title = chatTitle;
+                                    // 只有在标题是默认值"新对话"时，才更新为临时标题
+                                    if (!existingChat.title || existingChat.title === '新对话') {
+                                        existingChat.title = chatTitle;
+                                    }
                                     existingChat.messages = [...messageHistory]; // 更新消息，不需要重新加载
                                     updateChatHistoryUI();
                                 }
                             }
 
                             // 如果消息数量达到要求（有用户消息和助手回复），异步生成AI标题
+                            // 只在标题还是初始默认值时才更新（避免每次发送消息都更新标题）
                             const userMessages = messageHistory.filter(msg => msg.role === 'user');
                             const assistantMessages = messageHistory.filter(msg => msg.role === 'assistant');
-                            if (userMessages.length > 0 && assistantMessages.length > 0 && messageHistory.length >= 2) {
+                            const existingChat = chatHistoryList.find(c => c.id === currentChatId);
+                            const currentTitle = existingChat ? existingChat.title : chatTitle;
+                            // 判断是否需要生成AI标题：
+                            // 1. 消息数量>=2且有用户和助手消息
+                            // 2. 标题是默认值"新对话"或者是临时标题（从第一条消息提取的）
+                            // 3. 标题还未被AI生成过（避免重复生成）
+                            const isDefaultTitle = !currentTitle || currentTitle === '新对话' || currentTitle === chatTitle;
+                            // 确保只在首次对话或标题失败时生成，避免重复生成
+                            const shouldGenerateTitle = userMessages.length > 0 && assistantMessages.length > 0 && 
+                                                       messageHistory.length >= 2 && isDefaultTitle &&
+                                                       (currentTitle === '新对话' || currentTitle === chatTitle);
+                            if (shouldGenerateTitle) {
                                 // 异步生成标题，不阻塞主流程
                                 generateChatTitle(messageHistory).then(async (aiTitle) => {
                                     if (aiTitle && aiTitle !== chatTitle && currentChatId) {
                                         // 更新数据库中的标题
-                                        await updateChatTitle(currentChatId, aiTitle);
-                                        // 更新本地列表中的标题
-                                        const chat = chatHistoryList.find(c => c.id === currentChatId);
-                                        if (chat) {
-                                            chat.title = aiTitle;
-                                            // 使用打字机效果更新标题显示
-                                            updateChatTitleWithTypewriter(currentChatId, aiTitle);
+                                        const updateSuccess = await updateChatTitle(currentChatId, aiTitle);
+                                        if (updateSuccess) {
+                                            // 更新本地列表中的标题
+                                            const chat = chatHistoryList.find(c => c.id === currentChatId);
+                                            if (chat) {
+                                                chat.title = aiTitle;
+                                                // 使用打字机效果更新标题显示
+                                                updateChatTitleWithTypewriter(currentChatId, aiTitle);
+                                            }
                                         }
                                     }
                                 }).catch(error => {
@@ -3577,7 +3611,7 @@ ${conversationText}
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({
+                body: JSON.stringify({
                 action: 'chat',
                 messages: [
                     {
@@ -3589,7 +3623,7 @@ ${conversationText}
                         content: prompt
                     }
                 ],
-                model: getCurrentModel(),
+                model: 'gpt', // 统一使用通用助手模型生成标题
                 stream: false
             })
         });
@@ -3732,30 +3766,47 @@ async function saveChatToDatabase() {
                     updateChatHistoryUI();
                 }
             } else {
-                // 如果已存在的聊天，只更新标题和消息
+                // 如果已存在的聊天，只更新消息，不重置标题（避免覆盖已生成的AI标题）
                 const existingChat = chatHistoryList.find(c => c.id === currentChatId);
                 if (existingChat) {
-                    existingChat.title = chatTitle;
+                    // 只有在标题是默认值"新对话"时，才更新为临时标题
+                    if (!existingChat.title || existingChat.title === '新对话') {
+                        existingChat.title = chatTitle;
+                    }
                     existingChat.messages = [...messageHistory]; // 更新消息，不需要重新加载
                     updateChatHistoryUI();
                 }
             }
 
             // 如果消息数量达到要求（有用户消息和助手回复），异步生成AI标题
+            // 只在标题还是初始默认值时才更新（避免每次发送消息都更新标题）
             const userMessages = messageHistory.filter(msg => msg.role === 'user');
             const assistantMessages = messageHistory.filter(msg => msg.role === 'assistant');
-            if (userMessages.length > 0 && assistantMessages.length > 0 && messageHistory.length >= 2) {
+            const existingChat = chatHistoryList.find(c => c.id === currentChatId);
+            const currentTitle = existingChat ? existingChat.title : chatTitle;
+            // 判断是否需要生成AI标题：
+            // 1. 消息数量>=2且有用户和助手消息
+            // 2. 标题是默认值"新对话"或者是临时标题（从第一条消息提取的）
+            // 3. 标题还未被AI生成过（避免重复生成）
+            const isDefaultTitle = !currentTitle || currentTitle === '新对话' || currentTitle === chatTitle;
+            // 确保只在首次对话或标题失败时生成，避免重复生成
+            const shouldGenerateTitle = userMessages.length > 0 && assistantMessages.length > 0 && 
+                                       messageHistory.length >= 2 && isDefaultTitle &&
+                                       (currentTitle === '新对话' || currentTitle === chatTitle);
+            if (shouldGenerateTitle) {
                 // 异步生成标题，不阻塞主流程
                 generateChatTitle(messageHistory).then(async (aiTitle) => {
                     if (aiTitle && aiTitle !== chatTitle && currentChatId) {
                         // 更新数据库中的标题
-                        await updateChatTitle(currentChatId, aiTitle);
-                        // 更新本地列表中的标题
-                        const chat = chatHistoryList.find(c => c.id === currentChatId);
-                        if (chat) {
-                            chat.title = aiTitle;
-                            // 使用打字机效果更新标题显示
-                            updateChatTitleWithTypewriter(currentChatId, aiTitle);
+                        const updateSuccess = await updateChatTitle(currentChatId, aiTitle);
+                        if (updateSuccess) {
+                            // 更新本地列表中的标题
+                            const chat = chatHistoryList.find(c => c.id === currentChatId);
+                            if (chat) {
+                                chat.title = aiTitle;
+                                // 使用打字机效果更新标题显示
+                                updateChatTitleWithTypewriter(currentChatId, aiTitle);
+                            }
                         }
                     }
                 }).catch(error => {

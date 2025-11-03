@@ -488,10 +488,9 @@ function handleSaveChatHistory($mysqli) {
         $mysqli->begin_transaction();
         
         if ($chatId) {
-            // 更新现有聊天
-            $stmt = $mysqli->prepare('UPDATE chat_histories SET title = ? WHERE id = ? AND user_id = ?');
-            $stmt->bind_param('sii', $title, $chatId, $userId);
-            $stmt->execute();
+            // 更新现有聊天 - 不更新标题，避免覆盖已生成的AI标题
+            // 标题应该通过 updateChatTitle 函数单独更新
+            // 只更新消息，不更新标题
             
             // 删除旧消息
             $stmt = $mysqli->prepare('DELETE FROM messages WHERE chat_id = ?');
